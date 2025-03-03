@@ -99,6 +99,7 @@ main() {
         until select_timezone; do :; done
         until select_language; do :; done
         until select_keyboard; do :; done
+        until select_mirror_region; do :; done
         until select_disk; do :; done
         echo && gum_title "Desktop Setup"
         until select_enable_desktop_environment; do :; done
@@ -160,6 +161,7 @@ main() {
     exec_install_vm_support
     exec_finalize_arch_linux
     exec_cleanup_installation
+    configure_mirror_monitoring
 
     # Calc installation duration
     duration=$SECONDS # This is set before install starts
@@ -349,6 +351,7 @@ properties_generate() {
         echo "ARCH_LINUX_SAMBA_SHARE_ENABLED='${ARCH_LINUX_SAMBA_SHARE_ENABLED}'"
         echo "ARCH_LINUX_VM_SUPPORT_ENABLED='${ARCH_LINUX_VM_SUPPORT_ENABLED}'"
         echo "ARCH_LINUX_ECN_ENABLED='${ARCH_LINUX_ECN_ENABLED}'"
+        echo "ARCH_LINUX_MIRROR_REGION='${ARCH_LINUX_MIRROR_REGION}'"
     } >"$SCRIPT_CONFIG" # Write properties to file
 }
 
@@ -496,6 +499,21 @@ select_keyboard() {
         ARCH_LINUX_VCONSOLE_KEYMAP="$user_input" && properties_generate # Set value and generate properties file
     fi
     gum_property "Keyboard" "$ARCH_LINUX_VCONSOLE_KEYMAP"
+    return 0
+}
+
+# ---------------------------------------------------------------------------------------------------
+
+select_mirror_region() {
+    if [ -z "$ARCH_LINUX_MIRROR_REGION" ]; then
+        local user_input options
+        options=("Worldwide" "United States" "Germany" "Russia" "United Kingdom" "France")
+        user_input=$(gum_choose --header "+ Choose Mirror Region" "${options[@]}") || trap_gum_exit_confirm
+        [ -z "$user_input" ] && return 1
+        ARCH_LINUX_MIRROR_REGION="$user_input"
+        properties_generate
+    fi
+    gum_property "Mirror Region" "$ARCH_LINUX_MIRROR_REGION"
     return 0
 }
 
@@ -676,33 +694,39 @@ exec_init_installation() {
     local process_name="Initialize Installation"
     process_init "$process_name"
     (
-        [ "$DEBUG" = "true" ] && sleep 1 && process_return 0 # If debug mode then return
-        # Check installation prerequisites
+        [ "$DEBUG" = "true" ] && sleep 1 && process_return 0
+        # Устанавливаем reflector в live-систему
+        pacman -Sy --noconfirm reflector
         [ ! -d /sys/firmware/efi ] && log_fail "BIOS not supported! Please set your boot mode to UEFI." && exit 1
         log_info "UEFI detected"
         bootctl status | grep "Secure Boot" | grep -q "disabled" || { log_fail "You must disable Secure Boot in UEFI to continue installation" && exit 1; }
         log_info "Secure Boot: disabled"
         [ "$(cat /proc/sys/kernel/hostname)" != "archiso" ] && log_fail "You must execute the Installer from Arch ISO!" && exit 1
         log_info "Arch ISO detected"
-        log_info "Waiting for Reflector from Arch ISO..."
-        # This mirrorlist will copied to new Arch system during installation
-        while timeout 180 tail --pid=$(pgrep reflector) -f /dev/null &>/dev/null; do sleep 1; done
-        pgrep reflector &>/dev/null && log_fail "Reflector timeout after 180 seconds" && exit 1
-        rm -f /var/lib/pacman/db.lck # Remove pacman lock file if exists
-        timedatectl set-ntp true     # Set time
-        # Make sure everything is unmounted before start install
+        # Настройка зеркал с reflector
+        if [ -n "$ARCH_LINUX_MIRROR_REGION" ]; then
+            if [ "$ARCH_LINUX_MIRROR_REGION" = "Worldwide" ]; then
+                reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+            else
+                reflector --country "$ARCH_LINUX_MIRROR_REGION" --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+            fi
+            log_info "Mirrors updated for region: ${ARCH_LINUX_MIRROR_REGION}"
+        else
+            log_info "No mirror region specified, using default mirrorlist"
+        fi
+        pacman -Syy --noconfirm # Обновляем список пакетов с новым зеркалом
+        rm -f /var/lib/pacman/db.lck
+        timedatectl set-ntp true
         swapoff -a || true
         if [[ "$(umount -f -A -R /mnt 2>&1)" == *"target is busy"* ]]; then
-            # If umount is busy execute fuser
             fuser -km /mnt || true
             umount -f -A -R /mnt || true
         fi
-        wait # Wait for sub process
+        wait
         cryptsetup close cryptroot || true
         vgchange -an || true
-        # Temporarily disable ECN (prevent traffic problems with some old routers)
         [ "$ARCH_LINUX_ECN_ENABLED" = "false" ] && sysctl net.ipv4.tcp_ecn=0
-        pacman -Sy --noconfirm archlinux-keyring # Update keyring
+        pacman -Sy --noconfirm archlinux-keyring
         process_return 0
     ) &>"$PROCESS_LOG" &
     process_capture $! "$process_name"
@@ -757,7 +781,7 @@ exec_pacstrap_core() {
         [ "$DEBUG" = "true" ] && sleep 1 && process_return 0 # If debug mode then return
 
         # Core packages
-        local packages=("$ARCH_LINUX_KERNEL" base sudo linux-firmware zram-generator networkmanager)
+        local packages=("$ARCH_LINUX_KERNEL" base sudo linux-firmware zram-generator networkmanager reflector)
 
         # Add microcode package
         [ -n "$ARCH_LINUX_MICROCODE" ] && [ "$ARCH_LINUX_MICROCODE" != "none" ] && packages+=("$ARCH_LINUX_MICROCODE")
@@ -1428,6 +1452,34 @@ exec_cleanup_installation() {
         arch-chroot /mnt chown -R "$ARCH_LINUX_USERNAME":"$ARCH_LINUX_USERNAME" "/home/${ARCH_LINUX_USERNAME}"         # Set correct home permissions
         arch-chroot /mnt bash -c 'pacman -Qtd &>/dev/null && pacman -Rns --noconfirm $(pacman -Qtdq) || true' # Remove orphans and force return true
         process_return 0                                                                                      # Return
+    ) &>"$PROCESS_LOG" &
+    process_capture $! "$process_name"
+}
+
+# ---------------------------------------------------------------------------------------------------
+
+configure_mirror_monitoring() {
+    local process_name="Configure Mirror Monitoring"
+    process_init "$process_name"
+    (
+        [ "$DEBUG" = "true" ] && sleep 1 && process_return 0
+        # Создаём конфигурационный файл для reflector
+        mkdir -p /mnt/etc/xdg/reflector
+        {
+            echo "# Reflector configuration for automatic mirror updates"
+            echo "--save /etc/pacman.d/mirrorlist"
+            echo "--protocol https"
+            echo "--latest 10"
+            echo "--sort rate"
+            if [ "$ARCH_LINUX_MIRROR_REGION" != "Worldwide" ] && [ -n "$ARCH_LINUX_MIRROR_REGION" ]; then
+                echo "--country '$ARCH_LINUX_MIRROR_REGION'"
+            fi
+        } > /mnt/etc/xdg/reflector/reflector.conf
+        log_info "Reflector configured with region: ${ARCH_LINUX_MIRROR_REGION:-Worldwide}"
+        # Активируем systemd таймер для еженедельного обновления
+        arch-chroot /mnt systemctl enable reflector.timer
+        log_info "Reflector timer enabled for weekly mirror updates"
+        process_return 0
     ) &>"$PROCESS_LOG" &
     process_capture $! "$process_name"
 }
