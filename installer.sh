@@ -104,7 +104,6 @@ main() {
         echo && gum_title "Desktop Setup"
         until select_enable_desktop_environment; do :; done
         until select_enable_desktop_driver; do :; done
-        until select_enable_desktop_slim; do :; done
         until select_enable_desktop_keyboard; do :; done
         echo && gum_title "Feature Setup"
         until select_enable_encryption; do :; done
@@ -344,7 +343,6 @@ properties_generate() {
         echo "ARCH_LINUX_DESKTOP_ENABLED='${ARCH_LINUX_DESKTOP_ENABLED}'"
         echo "ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER='${ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER}'"
         echo "ARCH_LINUX_DESKTOP_EXTRAS_ENABLED='${ARCH_LINUX_DESKTOP_EXTRAS_ENABLED}'"
-        echo "ARCH_LINUX_DESKTOP_SLIM_ENABLED='${ARCH_LINUX_DESKTOP_SLIM_ENABLED}'"
         echo "ARCH_LINUX_DESKTOP_KEYBOARD_MODEL='${ARCH_LINUX_DESKTOP_KEYBOARD_MODEL}'"
         echo "ARCH_LINUX_DESKTOP_KEYBOARD_LAYOUT='${ARCH_LINUX_DESKTOP_KEYBOARD_LAYOUT}'"
         echo "ARCH_LINUX_DESKTOP_KEYBOARD_VARIANT='${ARCH_LINUX_DESKTOP_KEYBOARD_VARIANT}'"
@@ -592,27 +590,6 @@ select_enable_desktop_environment() {
         ARCH_LINUX_DESKTOP_ENABLED="$user_input" && properties_generate # Set value and generate properties file
     fi
     gum_property "Desktop Environment" "$ARCH_LINUX_DESKTOP_ENABLED"
-    return 0
-}
-
-# ---------------------------------------------------------------------------------------------------
-
-select_enable_desktop_slim() {
-    if [ "$ARCH_LINUX_DESKTOP_ENABLED" = "true" ]; then
-        if [ -z "$ARCH_LINUX_DESKTOP_SLIM_ENABLED" ]; then
-            local user_input
-            gum_confirm "Enable Desktop Slim Mode? (GNOME Core Apps only)" --affirmative="No (default)" --negative="Yes"
-            local user_confirm=$?
-            [ $user_confirm = 130 ] && {
-                trap_gum_exit_confirm
-                return 1
-            }
-            [ $user_confirm = 1 ] && user_input="true"
-            [ $user_confirm = 0 ] && user_input="false"
-            ARCH_LINUX_DESKTOP_SLIM_ENABLED="$user_input" && properties_generate # Set value and generate properties file
-        fi
-        gum_property "Desktop Slim Mode" "$ARCH_LINUX_DESKTOP_SLIM_ENABLED"
-    fi
     return 0
 }
 
@@ -935,7 +912,6 @@ exec_install_desktop() {
 
             # GNOME desktop extras
             if [ "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" = "true" ]; then
-
                 # GNOME base extras (buggy: power-profiles-daemon)
                 packages+=(gnome-browser-connector gnome-themes-extra tuned-ppd rygel cups gnome-epub-thumbnailer)
 
@@ -979,53 +955,80 @@ exec_install_desktop() {
                 packages+=(adw-gtk-theme tela-circle-icon-theme-standard)
             fi
 
-            # Installing packages together (preventing conflicts e.g.: jack2 and piepwire-jack)
-            chroot_pacman_install "${packages[@]}"
+            # Установка пакетов с исключением gnome-console и slim-пакетов
+            arch-chroot /mnt pacman -S --noconfirm --needed --disable-download-timeout \
+                --exclude gnome-console \
+                --exclude gnome-calendar \
+                --exclude gnome-maps \
+                --exclude gnome-contacts \
+                --exclude gnome-font-viewer \
+                --exclude gnome-characters \
+                --exclude gnome-clocks \
+                --exclude gnome-connections \
+                --exclude gnome-music \
+                --exclude gnome-weather \
+                --exclude gnome-calculator \
+                --exclude gnome-logs \
+                --exclude gnome-text-editor \
+                --exclude gnome-disk-utility \
+                --exclude simple-scan \
+                --exclude baobab \
+                --exclude totem \
+                --exclude snapshot \
+                --exclude epiphany \
+                --exclude loupe \
+                "${packages[@]}" || {
+                log_fail "Failed to install packages (excluding slim packages): ${packages[*]}"
+                process_return 1
+            }
 
-            # Удаляем GNOME Console (kgx) и очищаем его конфигурацию
-            chroot_pacman_remove kgx || true
+            # Очищаем конфигурацию gnome-console (kgx), если она осталась от предыдущих установок
             arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- rm -rf "/home/${ARCH_LINUX_USERNAME}/.config/kgx"
-            log_info "Installed Kitty and ZSH, removed kgx"
+            log_info "Installed Kitty and ZSH, excluded gnome-console and slim packages"
+
+            # Убеждаемся, что директория для .desktop-файлов существует
+            mkdir -p "/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications" || {
+                log_fail "Failed to create directory /mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications"
+                process_return 1
+            }
 
             # Создаём .desktop-файл для Kitty
-            echo -e '[Desktop Entry]\nType=Application\nName=Kitty\nExec=kitty\nIcon=kitty\nCategories=System;TerminalEmulator;' > "/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/kitty.desktop"
+            echo -e '[Desktop Entry]\nType=Application\nName=Kitty\nExec=kitty\nIcon=kitty\nCategories=System;TerminalEmulator;' > "/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/kitty.desktop" || {
+                log_fail "Failed to create kitty.desktop"
+                process_return 1
+            }
+
             # Устанавливаем Kitty как терминал по умолчанию в GNOME
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- gsettings set org.gnome.desktop.default-applications.terminal exec 'kitty'
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- gsettings set org.gnome.desktop.default-applications.terminal exec-arg ''
+            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- gsettings set org.gnome.desktop.default-applications.terminal exec 'kitty' || {
+                log_fail "Failed to set Kitty as default terminal"
+                process_return 1
+            }
+            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- gsettings set org.gnome.desktop.default-applications.terminal exec-arg '' || {
+                log_fail "Failed to set Kitty exec-arg"
+                process_return 1
+            }
 
             # Устанавливаем Oh My ZSH
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended || {
+                log_fail "Failed to install Oh My ZSH"
+                process_return 1
+            }
 
             # Устанавливаем ZSH как оболочку по умолчанию
-            arch-chroot /mnt chsh -s /bin/zsh "$ARCH_LINUX_USERNAME"
+            arch-chroot /mnt chsh -s /bin/zsh "$ARCH_LINUX_USERNAME" || {
+                log_fail "Failed to set ZSH as default shell"
+                process_return 1
+            }
 
             # Настраиваем Kitty для использования ZSH
-            mkdir -p "/mnt/home/${ARCH_LINUX_USERNAME}/.config/kitty"
-            echo -e 'shell /bin/zsh' > "/mnt/home/${ARCH_LINUX_USERNAME}/.config/kitty/kitty.conf"
-
-            # Force remove gnome packages
-            if [ "$ARCH_LINUX_DESKTOP_SLIM_ENABLED" = "true" ]; then
-                chroot_pacman_remove gnome-calendar || true
-                chroot_pacman_remove gnome-maps || true
-                chroot_pacman_remove gnome-contacts || true
-                chroot_pacman_remove gnome-font-viewer || true
-                chroot_pacman_remove gnome-characters || true
-                chroot_pacman_remove gnome-clocks || true
-                chroot_pacman_remove gnome-connections || true
-                chroot_pacman_remove gnome-music || true
-                chroot_pacman_remove gnome-weather || true
-                chroot_pacman_remove gnome-calculator || true
-                chroot_pacman_remove gnome-logs || true
-                chroot_pacman_remove gnome-text-editor || true
-                chroot_pacman_remove gnome-disk-utility || true
-                chroot_pacman_remove simple-scan || true
-                chroot_pacman_remove baobab || true
-                chroot_pacman_remove totem || true
-                chroot_pacman_remove snapshot || true
-                chroot_pacman_remove epiphany || true
-                chroot_pacman_remove loupe || true
-                #chroot_pacman_remove evince || true # Need for sushi
-            fi
+            mkdir -p "/mnt/home/${ARCH_LINUX_USERNAME}/.config/kitty" || {
+                log_fail "Failed to create Kitty config directory"
+                process_return 1
+            }
+            echo -e 'shell /bin/zsh' > "/mnt/home/${ARCH_LINUX_USERNAME}/.config/kitty/kitty.conf" || {
+                log_fail "Failed to configure Kitty to use ZSH"
+                process_return 1
+            }
 
             # Add user to other useful groups (https://wiki.archlinux.org/title/Users_and_groups#User_groups)
             arch-chroot /mnt groupadd -f plugdev
@@ -1036,7 +1039,6 @@ exec_install_desktop() {
 
             # Enable GNOME auto login
             mkdir -p /mnt/etc/gdm
-            # grep -qrnw /mnt/etc/gdm/custom.conf -e "AutomaticLoginEnable" || sed -i "s/^\[security\]/AutomaticLoginEnable=True\nAutomaticLogin=${ARCH_LINUX_USERNAME}\n\n\[security\]/g" /mnt/etc/gdm/custom.conf
             {
                 echo "[daemon]"
                 echo "WaylandEnable=True"
@@ -1080,7 +1082,6 @@ exec_install_desktop() {
 
             # Samba
             if [ "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" = "true" ]; then
-
                 # Create samba config
                 mkdir -p "/mnt/etc/samba/"
                 {
@@ -1122,7 +1123,6 @@ exec_install_desktop() {
                 arch-chroot /mnt testparm -s /etc/samba/smb.conf
 
                 if [ "$ARCH_LINUX_SAMBA_SHARE_ENABLED" = "true" ]; then
-
                     # Create samba public dir
                     arch-chroot /mnt mkdir -p /srv/samba/public
                     arch-chroot /mnt chmod 777 /srv/samba/public
@@ -1137,10 +1137,7 @@ exec_install_desktop() {
 
                 # Start samba services
                 arch-chroot /mnt systemctl enable smb.service
-
-                # https://wiki.archlinux.org/title/Samba#Windows_1709_or_up_does_not_discover_the_samba_server_in_Network_view
                 arch-chroot /mnt systemctl enable wsdd.service
-
                 # Disabled (master browser issues) > may needed for old windows clients
                 #arch-chroot /mnt systemctl enable nmb.service
             fi
@@ -1170,12 +1167,6 @@ exec_install_desktop() {
                 arch-chroot /mnt systemctl enable cups.socket # Printer
             fi
 
-            # User services (Not working: Failed to connect to user scope bus via local transport: Permission denied)
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user pipewire.service       # Pipewire
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user pipewire-pulse.service # Pipewire
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user wireplumber.service    # Pipewire
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user gcr-ssh-agent.socket   # GCR ssh-agent
-
             # Workaround: Manual creation of user service symlinks
             arch-chroot /mnt mkdir -p "/home/${ARCH_LINUX_USERNAME}/.config/systemd/user/default.target.wants"
             arch-chroot /mnt ln -s "/usr/lib/systemd/user/pipewire.service" "/home/${ARCH_LINUX_USERNAME}/.config/systemd/user/default.target.wants/pipewire.service"
@@ -1189,20 +1180,10 @@ exec_install_desktop() {
             arch-chroot /mnt ln -s "/usr/lib/systemd/user/wireplumber.service" "/home/${ARCH_LINUX_USERNAME}/.config/systemd/user/pipewire.service.wants/wireplumber.service"
             arch-chroot /mnt chown -R "$ARCH_LINUX_USERNAME":"$ARCH_LINUX_USERNAME" "/home/${ARCH_LINUX_USERNAME}/.config/systemd/"
 
-            # Create users applications dir
+            # Create users applications dir (повторное создание для надёжности)
             mkdir -p "/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications"
 
-            # Create UEFI Boot desktop entry
-            # {
-            #    echo '[Desktop Entry]'
-            #    echo 'Name=Reboot to UEFI'
-            #    echo 'Icon=system-reboot'
-            #    echo 'Exec=systemctl reboot --firmware-setup'
-            #    echo 'Type=Application'
-            #    echo 'Terminal=false'
-            # } >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/systemctl-reboot-firmware.desktop"
-
-            # Hide aplications desktop icons
+            # Hide applications desktop icons
             echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/bssh.desktop"
             echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/bvnc.desktop"
             echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/avahi-discover.desktop"
@@ -1210,7 +1191,7 @@ exec_install_desktop() {
             echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/qvidcap.desktop"
             echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/lstopo.desktop"
 
-            # Hide aplications (extra) desktop icons
+            # Hide applications (extra) desktop icons
             if [ "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" = "true" ]; then
                 echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/stoken-gui.desktop"       # networkmanager-openconnect
                 echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/stoken-gui-small.desktop" # networkmanager-openconnect
