@@ -1229,9 +1229,6 @@ exec_install_desktop() {
                     echo "gsettings set org.gnome.desktop.wm.keybindings toggle-fullscreen \"['<Super>F11']\""
                     echo "# exec_install_desktop | Favorite apps"
                     echo "gsettings set org.gnome.shell favorite-apps \"['org.gnome.Console.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']\""
-                    echo "# exec_install_desktop | Custom keybinding for input source switching"
-                    echo "gsettings set org.gnome.desktop.wm.keybindings switch-input-source \"['<Alt>Shift']\""
-                    echo "gsettings set org.gnome.desktop.wm.keybindings switch-input-source-backward \"['<Shift>Alt']\""
                 } >>"/mnt/home/${ARCH_LINUX_USERNAME}/${INIT_FILENAME}.sh"
             fi
 
