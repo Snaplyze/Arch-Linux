@@ -16,7 +16,7 @@ set -E          # ERR trap inherited by shell functions (errtrace)
 : "${FORCE:=false}" # FORCE=true ./installer.sh
 
 # SCRIPT
-VERSION='1.0.1'
+VERSION='1.0.0'
 
 # GUM
 GUM_VERSION="0.13.0"
@@ -931,7 +931,10 @@ exec_install_desktop() {
         (
             [ "$DEBUG" = "true" ] && sleep 1 && process_return 0 # If debug mode then return
 
-            local packages=(gnome git kitty zsh) # Добавлены kitty и zsh
+            local packages=()
+
+            # GNOME base packages
+            packages+=(gnome git)
 
             # GNOME desktop extras
             if [ "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" = "true" ]; then
@@ -981,27 +984,6 @@ exec_install_desktop() {
 
             # Installing packages together (preventing conflicts e.g.: jack2 and piepwire-jack)
             chroot_pacman_install "${packages[@]}"
-
-            # Удаляем GNOME Console (kgx) и очищаем его конфигурацию
-            chroot_pacman_remove kgx || true
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- rm -rf "/home/${ARCH_LINUX_USERNAME}/.config/kgx"
-            log_info "Installed Kitty and ZSH, removed kgx"
-
-            # Создаём .desktop-файл для Kitty
-            echo -e '[Desktop Entry]\nType=Application\nName=Kitty\nExec=kitty\nIcon=kitty\nCategories=System;TerminalEmulator;' > "/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/kitty.desktop"
-            # Устанавливаем Kitty как терминал по умолчанию в GNOME
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- gsettings set org.gnome.desktop.default-applications.terminal exec 'kitty'
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- gsettings set org.gnome.desktop.default-applications.terminal exec-arg ''
-
-            # Устанавливаем Oh My ZSH
-            arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
-
-            # Устанавливаем ZSH как оболочку по умолчанию
-            arch-chroot /mnt chsh -s /bin/zsh "$ARCH_LINUX_USERNAME"
-
-            # Настраиваем Kitty для использования ZSH
-            mkdir -p "/mnt/home/${ARCH_LINUX_USERNAME}/.config/kitty"
-            echo -e 'shell /bin/zsh' > "/mnt/home/${ARCH_LINUX_USERNAME}/.config/kitty/kitty.conf"
 
             # Force remove gnome packages
             if [ "$ARCH_LINUX_DESKTOP_SLIM_ENABLED" = "true" ]; then
@@ -1245,8 +1227,8 @@ exec_install_desktop() {
                     echo "gsettings set org.gnome.desktop.wm.keybindings minimize \"['<Super>h']\""
                     echo "gsettings set org.gnome.desktop.wm.keybindings show-desktop \"['<Super>d']\""
                     echo "gsettings set org.gnome.desktop.wm.keybindings toggle-fullscreen \"['<Super>F11']\""
-                    echo "# exec_install_desktop | Favorite apps (Kitty вместо Console)"
-                    echo "gsettings set org.gnome.shell favorite-apps \"['kitty.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']\""
+                    echo "# exec_install_desktop | Favorite apps"
+                    echo "gsettings set org.gnome.shell favorite-apps \"['org.gnome.Console.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']\""
                     echo "# exec_install_desktop | Custom keybinding for input source switching"
                     echo "gsettings set org.gnome.desktop.wm.keybindings switch-input-source \"['<Alt>Shift']\""
                     echo "gsettings set org.gnome.desktop.wm.keybindings switch-input-source-backward \"['<Shift>Alt']\""
