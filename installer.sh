@@ -1260,52 +1260,22 @@ exec_install_graphics_driver() {
                 chroot_pacman_install "${packages[@]}"
                 ;;
             "intel_i915") # https://wiki.archlinux.org/title/Intel_graphics#Installation
-                local packages=(
-                    mesa              # OpenGL и базовая поддержка 3D-графики
-                    vulkan-intel      # Vulkan API для графики и вычислений
-                    intel-media-driver # VAAPI для аппаратного ускорения видео (Gen9+)
-                    vkd3d             # Direct3D 12 через Vulkan
-                )
-                # Поддержка 32-битных приложений (например, для Steam), если включен multilib
-                [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(
-                    lib32-mesa              # 32-битная поддержка OpenGL
-                    lib32-vulkan-intel      # 32-битная поддержка Vulkan
-                    lib32-intel-media-driver # 32-битная поддержка VAAPI
-                    lib32-vkd3d             # 32-битная поддержка Direct3D 12
-                    lib32-libpulse          # 32-битная поддержка PulseAudio (для звука в Steam)
-                    lib32-alsa-plugins      # 32-битные плагины ALSA (для звука в Steam)
-                )
+                local packages=(vulkan-intel vkd3d libva-intel-driver)
+                [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-vulkan-intel lib32-vkd3d lib32-libva-intel-driver)
                 chroot_pacman_install "${packages[@]}"
-                # Добавление модуля i915 в initramfs для ранней загрузки графики
                 sed -i "s/^MODULES=(.*)/MODULES=(i915)/g" /mnt/etc/mkinitcpio.conf
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "nvidia") # https://wiki.archlinux.org/title/NVIDIA#Installation
-                local packages=(
-                    "${ARCH_LINUX_KERNEL}-headers" # Заголовки ядра для DKMS
-                    nvidia-dkms                    # Динамические модули NVIDIA для ядра
-                    nvidia-settings                # Графический интерфейс настройки
-                    nvidia-utils                   # Утилиты NVIDIA (nvidia-smi и др.)
-                    opencl-nvidia                  # Поддержка OpenCL
-                    libva-nvidia-driver            # VAAPI для аппаратного ускорения видео (NVDEC/NVENC)
-                    vkd3d                          # Direct3D 12 через Vulkan
-                    nvtop                          # Мониторинг GPU в терминале
-                )
-                # Поддержка 32-битных приложений (Steam и игры)
-                [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(
-                    lib32-nvidia-utils      # 32-битные утилиты NVIDIA
-                    lib32-opencl-nvidia     # 32-битный OpenCL
-                    lib32-vkd3d             # 32-битный Direct3D 12
-                    lib32-libpulse          # 32-битный PulseAudio для звука в Steam
-                    lib32-alsa-plugins      # 32-битные плагины ALSA для звука
-                )
+                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d)
+                [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-nvidia-utils lib32-opencl-nvidia lib32-vkd3d)
                 chroot_pacman_install "${packages[@]}"
-                # Настройка DRM и режимов (https://wiki.archlinux.org/title/NVIDIA#DRM_kernel_mode_setting)
-                mkdir -p /mnt/etc/modprobe.d/
-                echo -e 'options nvidia_drm modeset=1 fbdev=1' >/mnt/etc/modprobe.d/nvidia.conf
-                # Модули NVIDIA в initramfs
+                # https://wiki.archlinux.org/title/NVIDIA#DRM_kernel_mode_setting
+                # Alternative (slow boot, bios logo twice, but correct plymouth resolution):
+                #sed -i "s/systemd zswap.enabled=0/systemd nvidia_drm.modeset=1 nvidia_drm.fbdev=1 zswap.enabled=0/g" /mnt/boot/loader/entries/arch.conf
+                mkdir -p /mnt/etc/modprobe.d/ && echo -e 'options nvidia_drm modeset=1 fbdev=1' >/mnt/etc/modprobe.d/nvidia.conf
                 sed -i "s/^MODULES=(.*)/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/g" /mnt/etc/mkinitcpio.conf
-                # Хук для автоматического обновления initramfs (https://wiki.archlinux.org/title/NVIDIA#pacman_hook)
+                # https://wiki.archlinux.org/title/NVIDIA#pacman_hook
                 mkdir -p /mnt/etc/pacman.d/hooks/
                 {
                     echo "[Trigger]"
@@ -1324,9 +1294,9 @@ exec_install_graphics_driver() {
                     echo "NeedsTargets"
                     echo "Exec=/bin/sh -c 'while read -r trg; do case \$trg in linux*) exit 0; esac; done; /usr/bin/mkinitcpio -P'"
                 } >/mnt/etc/pacman.d/hooks/nvidia.hook
-                # Поддержка Wayland в GDM (https://wiki.archlinux.org/title/GDM#Wayland_and_the_proprietary_NVIDIA_driver)
+                # Enable Wayland Support (https://wiki.archlinux.org/title/GDM#Wayland_and_the_proprietary_NVIDIA_driver)
                 [ ! -f /mnt/etc/udev/rules.d/61-gdm.rules ] && mkdir -p /mnt/etc/udev/rules.d/ && ln -s /dev/null /mnt/etc/udev/rules.d/61-gdm.rules
-                # Пересоздание initramfs
+                # Rebuild initial ram disk
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "amd") # https://wiki.archlinux.org/title/AMDGPU#Installation
