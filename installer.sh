@@ -807,7 +807,7 @@ exec_pacstrap_core() {
         [ "$DEBUG" = "true" ] && sleep 1 && process_return 0 # If debug mode then return
 
         # Core packages
-        local packages=("$ARCH_LINUX_KERNEL" base sudo linux-firmware zram-generator networkmanager reflector)
+        local packages=("$ARCH_LINUX_KERNEL" base sudo linux-firmware zram-generator networkmanager reflector btrfs-progs)
 
         # Add microcode package
         [ -n "$ARCH_LINUX_MICROCODE" ] && [ "$ARCH_LINUX_MICROCODE" != "none" ] && packages+=("$ARCH_LINUX_MICROCODE")
