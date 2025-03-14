@@ -756,15 +756,41 @@ exec_prepare_disk() {
         fi
 
         # Format disk
-        mkfs.fat -F 32 -n BOOT "$ARCH_LINUX_BOOT_PARTITION"
-        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ] && mkfs.ext4 -F -L ROOT /dev/mapper/cryptroot
-        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && mkfs.ext4 -F -L ROOT "$ARCH_LINUX_ROOT_PARTITION"
+mkfs.fat -F 32 -n BOOT "$ARCH_LINUX_BOOT_PARTITION"
+[ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ] && mkfs.btrfs -f -L ROOT /dev/mapper/cryptroot
+[ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && mkfs.btrfs -f -L ROOT "$ARCH_LINUX_ROOT_PARTITION"
 
-        # Mount disk to /mnt
-        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ] && mount -v /dev/mapper/cryptroot /mnt
-        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && mount -v "$ARCH_LINUX_ROOT_PARTITION" /mnt
-        mkdir -p /mnt/boot
-        mount -v "$ARCH_LINUX_BOOT_PARTITION" /mnt/boot
+# Create Btrfs subvolumes
+if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
+    mount /dev/mapper/cryptroot /mnt
+else
+    mount "$ARCH_LINUX_ROOT_PARTITION" /mnt
+fi
+btrfs subvolume create /mnt/@
+btrfs subvolume create /mnt/@home
+btrfs subvolume create /mnt/@snapshots
+umount /mnt
+
+# Mount Btrfs subvolumes to /mnt
+if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
+    mount -o subvol=@ /dev/mapper/cryptroot /mnt
+else
+    mount -o subvol=@ "$ARCH_LINUX_ROOT_PARTITION" /mnt
+fi
+mkdir -p /mnt/home
+if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
+    mount -o subvol=@home /dev/mapper/cryptroot /mnt/home
+else
+    mount -o subvol=@home "$ARCH_LINUX_ROOT_PARTITION" /mnt/home
+fi
+mkdir -p /mnt/.snapshots
+if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
+    mount -o subvol=@snapshots /dev/mapper/cryptroot /mnt/.snapshots
+else
+    mount -o subvol=@snapshots "$ARCH_LINUX_ROOT_PARTITION" /mnt/.snapshots
+fi
+mkdir -p /mnt/boot
+mount -v "$ARCH_LINUX_BOOT_PARTITION" /mnt/boot
 
         # Return
         process_return 0
