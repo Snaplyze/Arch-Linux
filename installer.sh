@@ -16,7 +16,7 @@ set -E          # ERR trap inherited by shell functions (errtrace)
 : "${FORCE:=false}" # FORCE=true ./installer.sh
 
 # SCRIPT
-VERSION='1.0.0'
+VERSION='1.0.1'
 
 # GUM
 GUM_VERSION="0.13.0"
@@ -94,6 +94,7 @@ main() {
 
         # Selectors
         echo && gum_title "Core Setup"
+        until select_hostname; do :; done
         until select_username; do :; done
         until select_password; do :; done
         until select_timezone; do :; done
@@ -358,7 +359,7 @@ properties_generate() {
 properties_preset_source() {
 
     # Default presets
-    [ -z "$ARCH_LINUX_HOSTNAME" ] && ARCH_LINUX_HOSTNAME="Minilyze"
+    # [ -z "$ARCH_LINUX_HOSTNAME" ] && ARCH_LINUX_HOSTNAME="Minilyze"
     [ -z "$ARCH_LINUX_KERNEL" ] && ARCH_LINUX_KERNEL="linux-zen"
     [ -z "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" ] && ARCH_LINUX_DESKTOP_EXTRAS_ENABLED='true'
     [ -z "$ARCH_LINUX_SAMBA_SHARE_ENABLED" ] && ARCH_LINUX_SAMBA_SHARE_ENABLED="true"
@@ -410,6 +411,24 @@ properties_preset_source() {
 # ////////////////////////////////////////////////////////////////////////////////////////////////////
 # SELECTORS
 # ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+select_hostname() {
+    if [ -z "$ARCH_LINUX_HOSTNAME" ]; then
+        local user_input
+        user_input=$(gum_input --header "+ Enter Hostname" --placeholder "e.g. 'myarch'") || trap_gum_exit_confirm
+        [ -z "$user_input" ] && return 1                      # Проверка на пустое значение
+        # Проверка на допустимые символы (буквы, цифры, дефис)
+        if ! echo "$user_input" | grep -qE '^[a-zA-Z0-9-]+$'; then
+            gum_confirm --affirmative="Ok" --negative="" "Hostname can only contain letters, numbers, and hyphens"
+            return 1
+        fi
+        ARCH_LINUX_HOSTNAME="$user_input" && properties_generate # Установка значения и генерация файла свойств
+    fi
+    gum_property "Hostname" "$ARCH_LINUX_HOSTNAME"
+    return 0
+}
+
+# ---------------------------------------------------------------------------------------------------
 
 select_username() {
     if [ -z "$ARCH_LINUX_USERNAME" ]; then
