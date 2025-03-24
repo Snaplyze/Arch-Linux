@@ -16,7 +16,7 @@ set -E          # ERR trap inherited by shell functions (errtrace)
 : "${FORCE:=false}" # FORCE=true ./installer.sh
 
 # SCRIPT
-VERSION='1.0.1'
+VERSION='1.0.2'
 
 # GUM
 GUM_VERSION="0.13.0"
@@ -110,6 +110,7 @@ main() {
         echo && gum_title "Feature Setup"
         until select_enable_encryption; do :; done
         until select_enable_core_tweaks; do :; done
+        until select_enable_bootsplash; do :; done
         until select_enable_multilib; do :; done
         until select_enable_aur; do :; done
 
@@ -157,6 +158,7 @@ main() {
     exec_pacstrap_core
     exec_enable_multilib
     exec_install_aur_helper
+    exec_install_bootsplash
     exec_install_desktop
     exec_install_graphics_driver
     exec_install_vm_support
@@ -342,6 +344,7 @@ properties_generate() {
         echo "ARCH_LINUX_CORE_TWEAKS_ENABLED='${ARCH_LINUX_CORE_TWEAKS_ENABLED}'"
         echo "ARCH_LINUX_MULTILIB_ENABLED='${ARCH_LINUX_MULTILIB_ENABLED}'"
         echo "ARCH_LINUX_AUR_HELPER='${ARCH_LINUX_AUR_HELPER}'"
+        echo "ARCH_LINUX_BOOTSPLASH_ENABLED='${ARCH_LINUX_BOOTSPLASH_ENABLED}'"
         echo "ARCH_LINUX_DESKTOP_ENABLED='${ARCH_LINUX_DESKTOP_ENABLED}'"
         echo "ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER='${ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER}'"
         echo "ARCH_LINUX_DESKTOP_EXTRAS_ENABLED='${ARCH_LINUX_DESKTOP_EXTRAS_ENABLED}'"
@@ -388,6 +391,7 @@ properties_preset_source() {
             ARCH_LINUX_DESKTOP_ENABLED='false'
             ARCH_LINUX_MULTILIB_ENABLED='false'
             ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER="none"
+            ARCH_LINUX_BOOTSPLASH_ENABLED='false'
             ARCH_LINUX_AUR_HELPER='none'
         fi
 
@@ -396,6 +400,7 @@ properties_preset_source() {
             ARCH_LINUX_DESKTOP_EXTRAS_ENABLED='true'
             ARCH_LINUX_SAMBA_SHARE_ENABLED='true'
             ARCH_LINUX_CORE_TWEAKS_ENABLED="true"
+            ARCH_LINUX_BOOTSPLASH_ENABLED='true'
             ARCH_LINUX_DESKTOP_ENABLED='true'
             ARCH_LINUX_MULTILIB_ENABLED='true'
             ARCH_LINUX_AUR_HELPER='paru'
@@ -592,6 +597,25 @@ select_enable_core_tweaks() {
         ARCH_LINUX_CORE_TWEAKS_ENABLED="$user_input" && properties_generate # Set value and generate properties file
     fi
     gum_property "Core Tweaks" "$ARCH_LINUX_CORE_TWEAKS_ENABLED"
+    return 0
+}
+
+# ---------------------------------------------------------------------------------------------------
+
+select_enable_bootsplash() {
+    if [ -z "$ARCH_LINUX_BOOTSPLASH_ENABLED" ]; then
+        gum_confirm "Enable Bootsplash?"
+        local user_confirm=$?
+        [ $user_confirm = 130 ] && {
+            trap_gum_exit_confirm
+            return 1
+        }
+        local user_input
+        [ $user_confirm = 1 ] && user_input="false"
+        [ $user_confirm = 0 ] && user_input="true"
+        ARCH_LINUX_BOOTSPLASH_ENABLED="$user_input" && properties_generate # Set value and generate properties file
+    fi
+    gum_property "Bootsplash" "$ARCH_LINUX_BOOTSPLASH_ENABLED"
     return 0
 }
 
@@ -890,7 +914,7 @@ exec_pacstrap_core() {
         [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && kernel_args+=("root=PARTUUID=$(lsblk -dno PARTUUID "${ARCH_LINUX_ROOT_PARTITION}")" "rootflags=subvol=@")
         kernel_args+=('rw' 'init=/usr/lib/systemd/systemd' 'zswap.enabled=0')
         [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('nowatchdog')
-        [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('quiet' 'splash' 'vt.global_cursor_default=0')
+        [ "$ARCH_LINUX_BOOTSPLASH_ENABLED" = "true" ] || [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('quiet' 'splash' 'vt.global_cursor_default=0')
 
         { # Create Bootloader config
             echo 'default arch.conf'
@@ -1376,6 +1400,23 @@ exec_enable_multilib() {
             sed -i '/\[multilib\]/,/Include/s/^#//' /mnt/etc/pacman.conf
             arch-chroot /mnt pacman -Syyu --noconfirm
             process_return 0
+        ) &>"$PROCESS_LOG" &
+        process_capture $! "$process_name"
+    fi
+}
+
+# ---------------------------------------------------------------------------------------------------
+
+exec_install_bootsplash() {
+    local process_name="Bootsplash"
+    if [ "$ARCH_LINUX_BOOTSPLASH_ENABLED" = "true" ]; then
+        process_init "$process_name"
+        (
+            [ "$DEBUG" = "true" ] && sleep 1 && process_return 0                                       # If debug mode then return
+            chroot_pacman_install plymouth git base-devel                                              # Install packages
+            sed -i "s/base systemd keyboard/base systemd plymouth keyboard/g" /mnt/etc/mkinitcpio.conf # Configure mkinitcpio
+            arch-chroot /mnt plymouth-set-default-theme -R BGRT                                        # Set Theme & rebuild initram disk
+            process_return 0                                                                           # Return
         ) &>"$PROCESS_LOG" &
         process_capture $! "$process_name"
     fi
