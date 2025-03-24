@@ -1419,11 +1419,31 @@ exec_install_bootsplash() {
             # Создаем директорию для конфигурации Plymouth, если она не существует
             mkdir -p /mnt/etc/plymouth/
             
-            # Создаем или обновляем конфигурационный файл плимута с задержкой
-            {
-                echo "[Daemon]"
-                echo "ShowDelay=5"  # Задержка в секундах
-            } > /mnt/etc/plymouth/plymouthd.conf
+            # Проверяем существует ли файл конфигурации
+            if [ -f /mnt/etc/plymouth/plymouthd.conf ]; then
+                # Файл существует - проверяем есть ли секция [Daemon]
+                if grep -q "^\[Daemon\]" /mnt/etc/plymouth/plymouthd.conf; then
+                    # Секция существует - обновляем или добавляем параметр ShowDelay
+                    if grep -q "^ShowDelay=" /mnt/etc/plymouth/plymouthd.conf; then
+                        # Параметр существует - обновляем его
+                        sed -i 's/^ShowDelay=.*/ShowDelay=5/' /mnt/etc/plymouth/plymouthd.conf
+                    else
+                        # Параметр не существует - добавляем его после секции [Daemon]
+                        sed -i '/^\[Daemon\]/a ShowDelay=5' /mnt/etc/plymouth/plymouthd.conf
+                    fi
+                else
+                    # Секции нет - добавляем секцию и параметр в конец файла
+                    echo "" >> /mnt/etc/plymouth/plymouthd.conf
+                    echo "[Daemon]" >> /mnt/etc/plymouth/plymouthd.conf
+                    echo "ShowDelay=5" >> /mnt/etc/plymouth/plymouthd.conf
+                fi
+            else
+                # Файл не существует - создаем его с базовыми настройками
+                {
+                    echo "[Daemon]"
+                    echo "ShowDelay=5"  # Задержка в секундах
+                } > /mnt/etc/plymouth/plymouthd.conf
+            fi
             
             arch-chroot /mnt plymouth-set-default-theme -R BGRT                                        # Set Theme & rebuild initram disk
             log_info "Plymouth ShowDelay set to 5 seconds"
@@ -1566,8 +1586,13 @@ configure_mirror_monitoring() {
             echo "--latest 10"
             echo "--sort rate"
             if [ "$ARCH_LINUX_MIRROR_REGION" != "Worldwide" ] && [ -n "$ARCH_LINUX_MIRROR_REGION" ]; then
-                echo "--country '$ARCH_LINUX_MIRROR_REGION'"
+            # Странам с пробелами нужны кавычки в конфиг-файле
+            if [[ "$ARCH_LINUX_MIRROR_REGION" == *" "* ]]; then
+                echo "--country \"$ARCH_LINUX_MIRROR_REGION\""
+            else
+                echo "--country $ARCH_LINUX_MIRROR_REGION"
             fi
+        fi
         } > /mnt/etc/xdg/reflector/reflector.conf
         log_info "Reflector configured with region: ${ARCH_LINUX_MIRROR_REGION:-Worldwide}"
         # Активируем systemd таймер для еженедельного обновления
