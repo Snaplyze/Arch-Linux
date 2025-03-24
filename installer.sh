@@ -1641,16 +1641,23 @@ configure_mirror_monitoring() {
             echo "--protocol https"
             echo "--latest 10"
             echo "--sort rate"
-            if [ "$ARCH_LINUX_MIRROR_REGIONS" != "Worldwide" ] && [ -n "$ARCH_LINUX_MIRROR_REGIONS" ]; then
-            # Странам с пробелами нужны кавычки в конфиг-файле
-            if [[ "$ARCH_LINUX_MIRROR_REGIONS" == *" "* ]]; then
-                echo "--country \"$ARCH_LINUX_MIRROR_REGIONS\""
-            else
-                echo "--country $ARCH_LINUX_MIRROR_REGIONS"
+            
+            # Обработка выбранных регионов
+            if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" != "Worldwide" ]] && [ -n "${ARCH_LINUX_MIRROR_REGIONS[*]}" ]; then
+                # Добавляем каждую страну по отдельности
+                for region in "${ARCH_LINUX_MIRROR_REGIONS[@]}"; do
+                    echo "--country $region"
+                done
             fi
-        fi
         } > /mnt/etc/xdg/reflector/reflector.conf
-        log_info "Reflector configured with region: ${ARCH_LINUX_MIRROR_REGIONS:-Worldwide}"
+        
+        # Логирование информации о конфигурации
+        if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" == "Worldwide" ]] || [ -z "${ARCH_LINUX_MIRROR_REGIONS[*]}" ]; then
+            log_info "Reflector configured for Worldwide mirrors"
+        else
+            log_info "Reflector configured with regions: ${ARCH_LINUX_MIRROR_REGIONS[*]}"
+        fi
+        
         # Активируем systemd таймер для еженедельного обновления
         arch-chroot /mnt systemctl enable reflector.timer
         log_info "Reflector timer enabled for weekly mirror updates"
