@@ -776,7 +776,7 @@ exec_init_installation() {
             if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" == "Worldwide" ]]; then
                 # Для мирового региона не указываем страну
                 log_info "Using worldwide mirrors"
-                if reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
+                if reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
                     log_info "Mirrors updated successfully for Worldwide"
                 else
                     log_warn "Failed to update worldwide mirrors, using default mirrorlist"
@@ -791,12 +791,12 @@ exec_init_installation() {
                 
                 # Запускаем reflector с выбранными странами
                 log_info "Running reflector with params: $country_params"
-                if reflector $country_params --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
+                if reflector $country_params --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
                     log_info "Mirrors updated successfully for regions: ${ARCH_LINUX_MIRROR_REGIONS[*]}"
                 else
                     log_warn "Failed to update mirrors for specified regions, falling back to worldwide mirrors"
                     # Пробуем выбрать только лучшие зеркала без указания стран
-                    reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || {
+                    reflector --latest 20 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || {
                         log_warn "Fallback also failed, keeping original mirrorlist"
                     }
                 fi
@@ -1639,7 +1639,7 @@ configure_mirror_monitoring() {
             echo "# Reflector configuration for automatic mirror updates"
             echo "--save /etc/pacman.d/mirrorlist"
             echo "--protocol https"
-            echo "--latest 10"
+            echo "--latest 20"
             echo "--sort rate"
             
             # Обработка выбранных регионов
