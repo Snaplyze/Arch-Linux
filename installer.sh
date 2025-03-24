@@ -919,7 +919,7 @@ exec_pacstrap_core() {
         { # Create Bootloader config
             echo 'default arch.conf'
             echo 'console-mode auto'
-            echo 'timeout 0'
+            echo 'timeout 2'
             echo 'editor yes'
         } >/mnt/boot/loader/loader.conf
 
@@ -1426,27 +1426,27 @@ exec_install_bootsplash() {
                     # Секция существует - обновляем или добавляем параметр ShowDelay
                     if grep -q "^ShowDelay=" /mnt/etc/plymouth/plymouthd.conf; then
                         # Параметр существует - обновляем его
-                        sed -i 's/^ShowDelay=.*/ShowDelay=5/' /mnt/etc/plymouth/plymouthd.conf
+                        sed -i 's/^ShowDelay=.*/ShowDelay=3/' /mnt/etc/plymouth/plymouthd.conf
                     else
                         # Параметр не существует - добавляем его после секции [Daemon]
-                        sed -i '/^\[Daemon\]/a ShowDelay=5' /mnt/etc/plymouth/plymouthd.conf
+                        sed -i '/^\[Daemon\]/a ShowDelay=3' /mnt/etc/plymouth/plymouthd.conf
                     fi
                 else
                     # Секции нет - добавляем секцию и параметр в конец файла
                     echo "" >> /mnt/etc/plymouth/plymouthd.conf
                     echo "[Daemon]" >> /mnt/etc/plymouth/plymouthd.conf
-                    echo "ShowDelay=5" >> /mnt/etc/plymouth/plymouthd.conf
+                    echo "ShowDelay=3" >> /mnt/etc/plymouth/plymouthd.conf
                 fi
             else
                 # Файл не существует - создаем его с базовыми настройками
                 {
                     echo "[Daemon]"
-                    echo "ShowDelay=5"  # Задержка в секундах
+                    echo "ShowDelay=3"  # Задержка в секундах
                 } > /mnt/etc/plymouth/plymouthd.conf
             fi
             
             arch-chroot /mnt plymouth-set-default-theme -R BGRT                                        # Set Theme & rebuild initram disk
-            log_info "Plymouth ShowDelay set to 5 seconds"
+            log_info "Plymouth ShowDelay set to 3 seconds"
             process_return 0                                                                           # Return
         ) &>"$PROCESS_LOG" &
         process_capture $! "$process_name"
