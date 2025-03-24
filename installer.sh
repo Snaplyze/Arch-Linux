@@ -100,7 +100,7 @@ main() {
         until select_timezone; do :; done
         until select_language; do :; done
         until select_keyboard; do :; done
-        until select_mirror_region; do :; done
+        until select_mirror_regions; do :; done
         until select_disk; do :; done
         echo && gum_title "Desktop Setup"
         until select_enable_desktop_environment; do :; done
@@ -355,7 +355,7 @@ properties_generate() {
         echo "ARCH_LINUX_SAMBA_SHARE_ENABLED='${ARCH_LINUX_SAMBA_SHARE_ENABLED}'"
         echo "ARCH_LINUX_VM_SUPPORT_ENABLED='${ARCH_LINUX_VM_SUPPORT_ENABLED}'"
         echo "ARCH_LINUX_ECN_ENABLED='${ARCH_LINUX_ECN_ENABLED}'"
-        echo "ARCH_LINUX_MIRROR_REGION='${ARCH_LINUX_MIRROR_REGION}'"
+        echo "ARCH_LINUX_MIRROR_REGIONS=(${ARCH_LINUX_MIRROR_REGIONS[*]@Q})"
     } >"$SCRIPT_CONFIG" # Write properties to file
 }
 
@@ -528,16 +528,38 @@ select_keyboard() {
 
 # ---------------------------------------------------------------------------------------------------
 
-select_mirror_region() {
-    if [ -z "$ARCH_LINUX_MIRROR_REGION" ]; then
-        local user_input options
-        options=("Worldwide" "United States" "Germany" "Russia" "United Kingdom" "France")
-        user_input=$(gum_choose --header "+ Choose Mirror Region" "${options[@]}") || trap_gum_exit_confirm
-        [ -z "$user_input" ] && return 1
-        ARCH_LINUX_MIRROR_REGION="$user_input"
+select_mirror_regions() {
+    if [ -z "$ARCH_LINUX_MIRROR_REGIONS" ]; then
+        local user_input options selected_regions
+        options=("Worldwide" "DE (Germany)" "US (United States)" "GB (United Kingdom)" "FR (France)" "NL (Netherlands)" "CA (Canada)" "IT (Italy)" "ES (Spain)" "CH (Switzerland)" "SE (Sweden)" "NO (Norway)" "FI (Finland)" "JP (Japan)" "SG (Singapore)" "AU (Australia)" "NZ (New Zealand)")
+        
+        # Выбор нескольких стран с помощью gum
+        selected_regions=$(gum choose --no-limit --header "+ Choose Mirror Regions (Space to select, Enter to confirm)" "${options[@]}") || trap_gum_exit_confirm
+        [ -z "$selected_regions" ] && return 1
+
+        # Если пользователь выбрал "Worldwide", игнорируем другие выборы
+        if echo "$selected_regions" | grep -q "Worldwide"; then
+            ARCH_LINUX_MIRROR_REGIONS=("Worldwide")
+        else
+            # Извлекаем двухбуквенные коды стран
+            ARCH_LINUX_MIRROR_REGIONS=()
+            for region in $selected_regions; do
+                # Извлекаем код страны из опции (например, "DE (Germany)" -> "DE")
+                country_code=$(echo "$region" | awk -F' ' '{print $1}')
+                ARCH_LINUX_MIRROR_REGIONS+=("$country_code")
+            done
+        fi
         properties_generate
     fi
-    gum_property "Mirror Region" "$ARCH_LINUX_MIRROR_REGION"
+    
+    # Отображение выбранных регионов
+    local regions_display
+    if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" == "Worldwide" ]]; then
+        regions_display="Worldwide"
+    else
+        regions_display="${ARCH_LINUX_MIRROR_REGIONS[*]}"
+    fi
+    gum_property "Mirror Regions" "$regions_display"
     return 0
 }
 
@@ -746,18 +768,48 @@ exec_init_installation() {
         log_info "Secure Boot: disabled"
         [ "$(cat /proc/sys/kernel/hostname)" != "archiso" ] && log_fail "You must execute the Installer from Arch ISO!" && exit 1
         log_info "Arch ISO detected"
+        
         # Настройка зеркал с reflector
-        if [ -n "$ARCH_LINUX_MIRROR_REGION" ]; then
-            if [ "$ARCH_LINUX_MIRROR_REGION" = "Worldwide" ]; then
-                reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+        if [ -n "${ARCH_LINUX_MIRROR_REGIONS[*]}" ]; then
+            log_info "Configuring mirrors for: ${ARCH_LINUX_MIRROR_REGIONS[*]}"
+            
+            if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" == "Worldwide" ]]; then
+                # Для мирового региона не указываем страну
+                log_info "Using worldwide mirrors"
+                if reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
+                    log_info "Mirrors updated successfully for Worldwide"
+                else
+                    log_warn "Failed to update worldwide mirrors, using default mirrorlist"
+                fi
             else
-                reflector --country "$ARCH_LINUX_MIRROR_REGION" --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
+                # Формируем параметры country для каждого выбранного региона
+                country_params=""
+                for region in "${ARCH_LINUX_MIRROR_REGIONS[@]}"; do
+                    country_params+="--country $region "
+                    log_info "Adding mirrors from region: $region"
+                done
+                
+                # Запускаем reflector с выбранными странами
+                log_info "Running reflector with params: $country_params"
+                if reflector $country_params --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
+                    log_info "Mirrors updated successfully for regions: ${ARCH_LINUX_MIRROR_REGIONS[*]}"
+                else
+                    log_warn "Failed to update mirrors for specified regions, falling back to worldwide mirrors"
+                    # Пробуем выбрать только лучшие зеркала без указания стран
+                    reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist || {
+                        log_warn "Fallback also failed, keeping original mirrorlist"
+                    }
+                fi
             fi
-            log_info "Mirrors updated for region: ${ARCH_LINUX_MIRROR_REGION}"
         else
-            log_info "No mirror region specified, using default mirrorlist"
+            log_info "No mirror regions specified, using default mirrorlist"
         fi
-        pacman -Syy --noconfirm # Обновляем список пакетов с новым зеркалом
+        
+        # Обновляем список пакетов с новым зеркалом
+        pacman -Syy --noconfirm
+        log_info "Repository database refreshed"
+        
+        # Очистка и подготовка
         rm -f /var/lib/pacman/db.lck
         timedatectl set-ntp true
         swapoff -a || true
@@ -769,7 +821,11 @@ exec_init_installation() {
         cryptsetup close cryptroot || true
         vgchange -an || true
         [ "$ARCH_LINUX_ECN_ENABLED" = "false" ] && sysctl net.ipv4.tcp_ecn=0
+        
+        # Обновление ключей перед установкой
         pacman -Sy --noconfirm archlinux-keyring
+        log_info "Arch Linux keyring updated"
+        
         process_return 0
     ) &>"$PROCESS_LOG" &
     process_capture $! "$process_name"
@@ -1585,16 +1641,16 @@ configure_mirror_monitoring() {
             echo "--protocol https"
             echo "--latest 10"
             echo "--sort rate"
-            if [ "$ARCH_LINUX_MIRROR_REGION" != "Worldwide" ] && [ -n "$ARCH_LINUX_MIRROR_REGION" ]; then
+            if [ "$ARCH_LINUX_MIRROR_REGIONS" != "Worldwide" ] && [ -n "$ARCH_LINUX_MIRROR_REGIONS" ]; then
             # Странам с пробелами нужны кавычки в конфиг-файле
-            if [[ "$ARCH_LINUX_MIRROR_REGION" == *" "* ]]; then
-                echo "--country \"$ARCH_LINUX_MIRROR_REGION\""
+            if [[ "$ARCH_LINUX_MIRROR_REGIONS" == *" "* ]]; then
+                echo "--country \"$ARCH_LINUX_MIRROR_REGIONS\""
             else
-                echo "--country $ARCH_LINUX_MIRROR_REGION"
+                echo "--country $ARCH_LINUX_MIRROR_REGIONS"
             fi
         fi
         } > /mnt/etc/xdg/reflector/reflector.conf
-        log_info "Reflector configured with region: ${ARCH_LINUX_MIRROR_REGION:-Worldwide}"
+        log_info "Reflector configured with region: ${ARCH_LINUX_MIRROR_REGIONS:-Worldwide}"
         # Активируем systemd таймер для еженедельного обновления
         arch-chroot /mnt systemctl enable reflector.timer
         log_info "Reflector timer enabled for weekly mirror updates"
