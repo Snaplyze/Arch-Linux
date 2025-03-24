@@ -751,13 +751,9 @@ exec_init_installation() {
             if [ "$ARCH_LINUX_MIRROR_REGION" = "Worldwide" ]; then
                 reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
             else
-                # Проверяем наличие страны в списке и при ошибке используем запасной вариант
-                if ! reflector --country "${ARCH_LINUX_MIRROR_REGION}" --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist; then
-                    log_warn "Failed to update mirrors for region: ${ARCH_LINUX_MIRROR_REGION}, using worldwide mirrors"
-                    reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
-                fi
+                reflector --country "$ARCH_LINUX_MIRROR_REGION" --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist
             fi
-            log_info "Mirrors updated successfully"
+            log_info "Mirrors updated for region: ${ARCH_LINUX_MIRROR_REGION}"
         else
             log_info "No mirror region specified, using default mirrorlist"
         fi
