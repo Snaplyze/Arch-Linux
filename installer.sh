@@ -531,7 +531,7 @@ select_keyboard() {
 select_mirror_regions() {
     if [ -z "$ARCH_LINUX_MIRROR_REGIONS" ]; then
         local user_input options selected_regions
-        options=("Worldwide" "DE (Germany)" "US (United States)" "GB (United Kingdom)" "FR (France)" "NL (Netherlands)" "CA (Canada)" "IT (Italy)" "ES (Spain)" "CH (Switzerland)" "SE (Sweden)" "NO (Norway)" "FI (Finland)" "JP (Japan)" "SG (Singapore)" "AU (Australia)" "NZ (New Zealand)")
+        options=("Worldwide" "DE (Germany)" "US (United States)" "GB (United Kingdom)" "FR (France)" "RU (Russia)" "NL (Netherlands)" "CA (Canada)" "IT (Italy)" "ES (Spain)" "CH (Switzerland)" "SE (Sweden)" "NO (Norway)" "FI (Finland)" "JP (Japan)" "SG (Singapore)" "AU (Australia)" "NZ (New Zealand)")
         
         # Выбор нескольких стран с помощью gum
         selected_regions=$(gum choose --no-limit --header "+ Choose Mirror Regions (Space to select, Enter to confirm)" "${options[@]}") || trap_gum_exit_confirm
