@@ -1469,7 +1469,11 @@ exec_install_bootsplash() {
         process_init "$process_name"
         (
             [ "$DEBUG" = "true" ] && sleep 1 && process_return 0                                       # If debug mode then return
-            chroot_pacman_install plymouth git base-devel                                              # Install packages
+            
+            # Устанавливаем необходимые пакеты
+            chroot_pacman_install plymouth plymouth-theme-bgrt git base-devel                          # Добавлен пакет plymouth-theme-bgrt
+            
+            # Настраиваем mkinitcpio
             sed -i "s/base systemd keyboard/base systemd plymouth keyboard/g" /mnt/etc/mkinitcpio.conf # Configure mkinitcpio
             
             # Создаем директорию для конфигурации Plymouth, если она не существует
@@ -1501,8 +1505,29 @@ exec_install_bootsplash() {
                 } > /mnt/etc/plymouth/plymouthd.conf
             fi
             
-            arch-chroot /mnt plymouth-set-default-theme -R BGRT                                        # Set Theme & rebuild initram disk
-            log_info "Plymouth ShowDelay set to 3 seconds"
+            # Проверяем доступные темы и устанавливаем тему
+            log_info "Checking available Plymouth themes..."
+            if arch-chroot /mnt plymouth-set-default-theme --list | grep -q "BGRT"; then
+                log_info "Setting Plymouth theme to BGRT"
+                arch-chroot /mnt plymouth-set-default-theme -R BGRT
+            elif arch-chroot /mnt plymouth-set-default-theme --list | grep -q "spinner"; then
+                log_info "BGRT theme not found, using spinner theme instead"
+                arch-chroot /mnt plymouth-set-default-theme -R spinner
+            else
+                # Используем первую доступную тему из списка или стандартную тему Plymouth
+                local first_theme
+                first_theme=$(arch-chroot /mnt plymouth-set-default-theme --list | head -1)
+                if [ -n "$first_theme" ]; then
+                    log_info "Using available theme: $first_theme"
+                    arch-chroot /mnt plymouth-set-default-theme -R "$first_theme"
+                else
+                    log_warn "No Plymouth themes found, skipping theme setup"
+                    # Перестраиваем initramfs без установки темы
+                    arch-chroot /mnt mkinitcpio -P
+                fi
+            fi
+            
+            log_info "Plymouth ShowDelay set to 5 seconds"
             process_return 0                                                                           # Return
         ) &>"$PROCESS_LOG" &
         process_capture $! "$process_name"
