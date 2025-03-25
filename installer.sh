@@ -16,7 +16,7 @@ set -E          # ERR trap inherited by shell functions (errtrace)
 : "${FORCE:=false}" # FORCE=true ./installer.sh
 
 # SCRIPT
-VERSION='1.0.2'
+VERSION='1.0.3'
 
 # GUM
 GUM_VERSION="0.13.0"
@@ -1142,9 +1142,6 @@ exec_install_desktop() {
             {
                 echo "[daemon]"
                 echo "WaylandEnable=True"
-                echo ""
-                echo "AutomaticLoginEnable=True"
-                echo "AutomaticLogin=${ARCH_LINUX_USERNAME}"
                 echo ""
                 echo "[debug]"
                 echo "Enable=False"
