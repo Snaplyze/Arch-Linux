@@ -1321,8 +1321,6 @@ exec_install_desktop() {
             # Add Init script
             if [ "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" = "true" ]; then
                 {
-                    echo "# exec_install_desktop | Theming settings"
-                    echo "gsettings set org.gnome.desktop.interface accent-color 'slate'"
                     echo "# exec_install_desktop | Font settings"
                     echo "gsettings set org.gnome.desktop.interface font-hinting 'slight'"
                     echo "gsettings set org.gnome.desktop.interface font-antialiasing 'rgba'"
