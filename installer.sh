@@ -975,7 +975,7 @@ exec_pacstrap_core() {
         { # Create Bootloader config
             echo 'default arch.conf'
             echo 'console-mode auto'
-            echo 'timeout 2'
+            echo 'timeout 5'
             echo 'editor yes'
         } >/mnt/boot/loader/loader.conf
 
@@ -1100,11 +1100,6 @@ exec_install_desktop() {
                 packages+=(gamemode sdl_image)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-gamemode lib32-sdl_image)
 
-                # Fonts
-                packages+=(inter-font ttf-firacode-nerd ttf-nerd-fonts-symbols ttf-font-awesome noto-fonts noto-fonts-emoji ttf-liberation ttf-dejavu adobe-source-sans-fonts adobe-source-serif-fonts)
-
-                # Theming
-                packages+=(adw-gtk-theme tela-circle-icon-theme-standard)
             fi
 
             # Installing packages together (preventing conflicts e.g.: jack2 and piepwire-jack)
@@ -1330,28 +1325,14 @@ exec_install_desktop() {
             if [ "$ARCH_LINUX_DESKTOP_EXTRAS_ENABLED" = "true" ]; then
                 {
                     echo "# exec_install_desktop | Theming settings"
-                    echo "gsettings set org.gnome.desktop.interface gtk-theme 'adw-gtk3'"
-                    echo "gsettings set org.gnome.desktop.interface icon-theme 'Tela-circle'"
                     echo "gsettings set org.gnome.desktop.interface accent-color 'slate'"
                     echo "# exec_install_desktop | Font settings"
                     echo "gsettings set org.gnome.desktop.interface font-hinting 'slight'"
                     echo "gsettings set org.gnome.desktop.interface font-antialiasing 'rgba'"
-                    echo "gsettings set org.gnome.desktop.interface font-name 'Inter 10'"
-                    echo "gsettings set org.gnome.desktop.interface document-font-name 'Inter 10'"
-                    echo "gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Inter Bold 10'"
-                    echo "gsettings set org.gnome.desktop.interface monospace-font-name 'FiraCode Nerd Font 10'"
                     echo "# exec_install_desktop | Show all input sources"
                     echo "gsettings set org.gnome.desktop.input-sources show-all-sources true"
                     echo "# exec_install_desktop | Mutter settings"
                     echo "gsettings set org.gnome.mutter center-new-windows true"
-                    echo "# exec_install_desktop | File chooser settings"
-                    echo "gsettings set org.gtk.Settings.FileChooser sort-directories-first true"
-                    echo "gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true"
-                    echo "# exec_install_desktop | Keybinding settings"
-                    echo "gsettings set org.gnome.desktop.wm.keybindings close \"['<Super>q']\""
-                    echo "gsettings set org.gnome.desktop.wm.keybindings minimize \"['<Super>h']\""
-                    echo "gsettings set org.gnome.desktop.wm.keybindings show-desktop \"['<Super>d']\""
-                    echo "gsettings set org.gnome.desktop.wm.keybindings toggle-fullscreen \"['<Super>F11']\""
                     echo "# exec_install_desktop | Favorite apps"
                     echo "gsettings set org.gnome.shell favorite-apps \"['org.gnome.Console.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Software.desktop', 'org.gnome.Settings.desktop']\""
                 } >>"/mnt/home/${ARCH_LINUX_USERNAME}/${INIT_FILENAME}.sh"
@@ -1486,22 +1467,22 @@ exec_install_bootsplash() {
                     # Секция существует - обновляем или добавляем параметр ShowDelay
                     if grep -q "^ShowDelay=" /mnt/etc/plymouth/plymouthd.conf; then
                         # Параметр существует - обновляем его
-                        sed -i 's/^ShowDelay=.*/ShowDelay=3/' /mnt/etc/plymouth/plymouthd.conf
+                        sed -i 's/^ShowDelay=.*/ShowDelay=5/' /mnt/etc/plymouth/plymouthd.conf
                     else
                         # Параметр не существует - добавляем его после секции [Daemon]
-                        sed -i '/^\[Daemon\]/a ShowDelay=3' /mnt/etc/plymouth/plymouthd.conf
+                        sed -i '/^\[Daemon\]/a ShowDelay=5' /mnt/etc/plymouth/plymouthd.conf
                     fi
                 else
                     # Секции нет - добавляем секцию и параметр в конец файла
                     echo "" >> /mnt/etc/plymouth/plymouthd.conf
                     echo "[Daemon]" >> /mnt/etc/plymouth/plymouthd.conf
-                    echo "ShowDelay=3" >> /mnt/etc/plymouth/plymouthd.conf
+                    echo "ShowDelay=5" >> /mnt/etc/plymouth/plymouthd.conf
                 fi
             else
                 # Файл не существует - создаем его с базовыми настройками
                 {
                     echo "[Daemon]"
-                    echo "ShowDelay=3"  # Задержка в секундах
+                    echo "ShowDelay=5"  # Задержка в секундах
                 } > /mnt/etc/plymouth/plymouthd.conf
             fi
             
