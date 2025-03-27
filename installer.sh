@@ -1445,67 +1445,9 @@ exec_install_bootsplash() {
         process_init "$process_name"
         (
             [ "$DEBUG" = "true" ] && sleep 1 && process_return 0
-            
-            # Устанавливаем plymouth и необходимые пакеты
             chroot_pacman_install plymouth git base-devel
-            
-            # Настраиваем mkinitcpio
             sed -i "s/base systemd keyboard/base systemd plymouth keyboard/g" /mnt/etc/mkinitcpio.conf
-            
-            # Создаем директорию для конфигурации Plymouth, если она не существует
-            mkdir -p /mnt/etc/plymouth/
-            
-            # Проверяем существует ли файл конфигурации
-            if [ -f /mnt/etc/plymouth/plymouthd.conf ]; then
-                # Файл существует - проверяем есть ли секция [Daemon]
-                if grep -q "^\[Daemon\]" /mnt/etc/plymouth/plymouthd.conf; then
-                    # Секция существует - обновляем или добавляем параметр ShowDelay
-                    if grep -q "^ShowDelay=" /mnt/etc/plymouth/plymouthd.conf; then
-                        # Параметр существует - обновляем его
-                        sed -i 's/^ShowDelay=.*/ShowDelay=5/' /mnt/etc/plymouth/plymouthd.conf
-                    else
-                        # Параметр не существует - добавляем его после секции [Daemon]
-                        sed -i '/^\[Daemon\]/a ShowDelay=5' /mnt/etc/plymouth/plymouthd.conf
-                    fi
-                else
-                    # Секции нет - добавляем секцию и параметр в конец файла
-                    echo "" >> /mnt/etc/plymouth/plymouthd.conf
-                    echo "[Daemon]" >> /mnt/etc/plymouth/plymouthd.conf
-                    echo "ShowDelay=5" >> /mnt/etc/plymouth/plymouthd.conf
-                fi
-            else
-                # Файл не существует - создаем его с базовыми настройками
-                {
-                    echo "[Daemon]"
-                    echo "ShowDelay=5"  # Задержка в секундах
-                } > /mnt/etc/plymouth/plymouthd.conf
-            fi
-            
-            # Проверяем установленные темы Plymouth
-            log_info "Checking available Plymouth themes..."
-            available_themes=$(arch-chroot /mnt plymouth-set-default-theme --list 2>/dev/null || echo "")
-            
-            if [ -z "$available_themes" ]; then
-                log_warn "No Plymouth themes found. Plymouth may not be installed correctly."
-                # Перестраиваем initramfs без указания темы
-                arch-chroot /mnt mkinitcpio -P
-            else
-                # Проверяем наличие темы BGRT
-                if echo "$available_themes" | grep -q "^bgrt$"; then
-                    log_info "Setting Plymouth theme to bgrt"
-                    arch-chroot /mnt plymouth-set-default-theme -R bgrt
-                elif echo "$available_themes" | grep -q "^spinner$"; then
-                    log_info "BGRT theme not available, using spinner theme"
-                    arch-chroot /mnt plymouth-set-default-theme -R spinner
-                else
-                    # Используем первую доступную тему
-                    first_theme=$(echo "$available_themes" | head -1)
-                    log_info "Using first available theme: $first_theme"
-                    arch-chroot /mnt plymouth-set-default-theme -R "$first_theme"
-                fi
-            fi
-            
-            log_info "Plymouth ShowDelay set to 3 seconds"
+            arch-chroot /mnt plymouth-set-default-theme -R bgrt
             process_return 0
         ) &>"$PROCESS_LOG" &
         process_capture $! "$process_name"
