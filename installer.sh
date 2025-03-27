@@ -1449,63 +1449,85 @@ exec_install_bootsplash() {
             # Устанавливаем plymouth и необходимые пакеты
             chroot_pacman_install plymouth git base-devel
             
-            # Настраиваем mkinitcpio
-            sed -i "s/base systemd keyboard/base systemd plymouth keyboard/g" /mnt/etc/mkinitcpio.conf
+            # Настраиваем mkinitcpio с Plymouth в ранней загрузке
+            # Перемещаем plymouth перед systemd для более раннего запуска
+            sed -i "s/base systemd keyboard/base plymouth systemd keyboard/g" /mnt/etc/mkinitcpio.conf
             
-            # Создаем директорию для конфигурации Plymouth, если она не существует
-            mkdir -p /mnt/etc/plymouth/
-            
-            # Проверяем существует ли файл конфигурации
-            if [ -f /mnt/etc/plymouth/plymouthd.conf ]; then
-                # Файл существует - проверяем есть ли секция [Daemon]
-                if grep -q "^\[Daemon\]" /mnt/etc/plymouth/plymouthd.conf; then
-                    # Секция существует - обновляем или добавляем параметр ShowDelay
-                    if grep -q "^ShowDelay=" /mnt/etc/plymouth/plymouthd.conf; then
-                        # Параметр существует - обновляем его
-                        sed -i 's/^ShowDelay=.*/ShowDelay=5/' /mnt/etc/plymouth/plymouthd.conf
-                    else
-                        # Параметр не существует - добавляем его после секции [Daemon]
-                        sed -i '/^\[Daemon\]/a ShowDelay=5' /mnt/etc/plymouth/plymouthd.conf
-                    fi
-                else
-                    # Секции нет - добавляем секцию и параметр в конец файла
-                    echo "" >> /mnt/etc/plymouth/plymouthd.conf
-                    echo "[Daemon]" >> /mnt/etc/plymouth/plymouthd.conf
-                    echo "ShowDelay=5" >> /mnt/etc/plymouth/plymouthd.conf
-                fi
-            else
-                # Файл не существует - создаем его с базовыми настройками
+            # Проверяем наличие NVIDIA
+            if [ "$ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER" = "nvidia" ] || lspci | grep -i nvidia &>/dev/null; then
+                log_info "NVIDIA GPU detected, applying special Plymouth settings"
+                
+                # Создаем директорию для конфигурации Plymouth
+                mkdir -p /mnt/etc/plymouth/
+                
+                # Настройки Plymouth для NVIDIA
                 {
                     echo "[Daemon]"
-                    echo "ShowDelay=5"  # Задержка в секундах
+                    echo "Theme=spinner"
+                    echo "ShowDelay=10"       # Увеличиваем задержку для мощных систем
+                    echo "DeviceTimeout=10"   # Увеличиваем тайм-аут устройства
                 } > /mnt/etc/plymouth/plymouthd.conf
-            fi
-            
-            # Проверяем установленные темы Plymouth
-            log_info "Checking available Plymouth themes..."
-            available_themes=$(arch-chroot /mnt plymouth-set-default-theme --list 2>/dev/null || echo "")
-            
-            if [ -z "$available_themes" ]; then
-                log_warn "No Plymouth themes found. Plymouth may not be installed correctly."
-                # Перестраиваем initramfs без указания темы
-                arch-chroot /mnt mkinitcpio -P
+                
+                # Добавляем параметры ядра для плавной загрузки
+                for entry_file in /mnt/boot/loader/entries/*.conf; do
+                    if ! grep -q "splash" "$entry_file"; then
+                        sed -i 's/\(options.*\)/\1 splash/' "$entry_file"
+                    fi
+                    
+                    # Добавляем nvidia_drm.fbdev=1 если ещё нет (для работы с Plymouth)
+                    if ! grep -q "nvidia_drm.fbdev=1" "$entry_file"; then
+                        sed -i 's/\(options.*\)/\1 nvidia_drm.fbdev=1/' "$entry_file"
+                    fi
+                    
+                    # Добавляем параметр для предотвращения мерцания
+                    if ! grep -q "video=efifb:off" "$entry_file"; then
+                        sed -i 's/\(options.*\)/\1 video=efifb:off/' "$entry_file"
+                    fi
+                done
+                
+                # Устанавливаем тему spinner для лучшей совместимости с NVIDIA
+                log_info "Setting Plymouth theme to spinner for NVIDIA compatibility"
+                arch-chroot /mnt plymouth-set-default-theme -R spinner
             else
-                # Проверяем наличие темы BGRT
+                # Стандартная настройка для не-NVIDIA систем
+                mkdir -p /mnt/etc/plymouth/
+                
+                # Проверяем существует ли файл конфигурации
+                if [ -f /mnt/etc/plymouth/plymouthd.conf ]; then
+                    # Обновляем существующий файл, не перезаписывая его
+                    if grep -q "^\[Daemon\]" /mnt/etc/plymouth/plymouthd.conf; then
+                        if grep -q "^ShowDelay=" /mnt/etc/plymouth/plymouthd.conf; then
+                            sed -i 's/^ShowDelay=.*/ShowDelay=5/' /mnt/etc/plymouth/plymouthd.conf
+                        else
+                            sed -i '/^\[Daemon\]/a ShowDelay=5' /mnt/etc/plymouth/plymouthd.conf
+                        fi
+                    else
+                        echo "" >> /mnt/etc/plymouth/plymouthd.conf
+                        echo "[Daemon]" >> /mnt/etc/plymouth/plymouthd.conf
+                        echo "ShowDelay=5" >> /mnt/etc/plymouth/plymouthd.conf
+                    fi
+                else
+                    # Создаем базовый файл конфигурации
+                    {
+                        echo "[Daemon]"
+                        echo "ShowDelay=5"
+                    } > /mnt/etc/plymouth/plymouthd.conf
+                fi
+                
+                # Устанавливаем подходящую тему
+                log_info "Checking available Plymouth themes..."
+                available_themes=$(arch-chroot /mnt plymouth-set-default-theme --list 2>/dev/null || echo "")
+                
                 if echo "$available_themes" | grep -q "^bgrt$"; then
                     log_info "Setting Plymouth theme to bgrt"
                     arch-chroot /mnt plymouth-set-default-theme -R bgrt
-                elif echo "$available_themes" | grep -q "^spinner$"; then
-                    log_info "BGRT theme not available, using spinner theme"
-                    arch-chroot /mnt plymouth-set-default-theme -R spinner
                 else
-                    # Используем первую доступную тему
-                    first_theme=$(echo "$available_themes" | head -1)
-                    log_info "Using first available theme: $first_theme"
-                    arch-chroot /mnt plymouth-set-default-theme -R "$first_theme"
+                    log_info "Using spinner theme for maximum compatibility"
+                    arch-chroot /mnt plymouth-set-default-theme -R spinner
                 fi
             fi
             
-            log_info "Plymouth ShowDelay set to 3 seconds"
+            log_info "Plymouth configuration completed"
             process_return 0
         ) &>"$PROCESS_LOG" &
         process_capture $! "$process_name"
