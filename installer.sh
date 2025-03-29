@@ -970,6 +970,8 @@ exec_pacstrap_core() {
         [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && kernel_args+=("root=PARTUUID=$(lsblk -dno PARTUUID "${ARCH_LINUX_ROOT_PARTITION}")" "rootflags=subvol=@")
         kernel_args+=('rw' 'init=/usr/lib/systemd/systemd' 'zswap.enabled=0')
         [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('nowatchdog')
+        # Добавляем параметр nvidia-drm.modeset=1 для nvidia драйвера (ИСПРАВЛЕНИЕ)
+        [ "$ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER" = "nvidia" ] && kernel_args+=('nvidia-drm.modeset=1')
         [ "$ARCH_LINUX_BOOTSPLASH_ENABLED" = "true" ] || [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('quiet' 'splash' 'vt.global_cursor_default=0')
 
         { # Create Bootloader config
@@ -1365,7 +1367,8 @@ exec_install_graphics_driver() {
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "nvidia") # https://wiki.archlinux.org/title/NVIDIA#Installation
-                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d)
+                # ИСПРАВЛЕНИЕ: Добавлен пакет vulkan-tools
+                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d vulkan-tools)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-nvidia-utils lib32-opencl-nvidia lib32-vkd3d)
                 chroot_pacman_install "${packages[@]}"
                 # https://wiki.archlinux.org/title/NVIDIA#DRM_kernel_mode_setting
@@ -1375,23 +1378,24 @@ exec_install_graphics_driver() {
                 sed -i "s/^MODULES=(.*)/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/g" /mnt/etc/mkinitcpio.conf
                 # https://wiki.archlinux.org/title/NVIDIA#pacman_hook
                 mkdir -p /mnt/etc/pacman.d/hooks/
+                
+                # ИСПРАВЛЕНИЕ: Исправлен pacman hook для NVIDIA
                 {
                     echo "[Trigger]"
                     echo "Operation=Install"
                     echo "Operation=Upgrade"
                     echo "Operation=Remove"
                     echo "Type=Package"
-                    echo "Target=nvidia"
+                    echo "Target=nvidia-dkms"
                     echo "Target=${ARCH_LINUX_KERNEL}"
-                    echo "# Change the linux part above if a different kernel is used"
                     echo ""
                     echo "[Action]"
                     echo "Description=Update NVIDIA module in initcpio"
                     echo "Depends=mkinitcpio"
                     echo "When=PostTransaction"
-                    echo "NeedsTargets"
-                    echo "Exec=/bin/sh -c 'while read -r trg; do case \$trg in linux*) exit 0; esac; done; /usr/bin/mkinitcpio -P'"
+                    echo "Exec=/usr/bin/mkinitcpio -P"
                 } >/mnt/etc/pacman.d/hooks/nvidia.hook
+                
                 # Enable Wayland Support (https://wiki.archlinux.org/title/GDM#Wayland_and_the_proprietary_NVIDIA_driver)
                 [ ! -f /mnt/etc/udev/rules.d/61-gdm.rules ] && mkdir -p /mnt/etc/udev/rules.d/ && ln -s /dev/null /mnt/etc/udev/rules.d/61-gdm.rules
                 # Rebuild initial ram disk
@@ -1539,325 +1543,4 @@ exec_finalize_arch_linux() {
             # Print initialized info
             {
                 echo "# exec_finalize_arch_linux | Print initialized info"
-                echo "echo \"\$(date '+%Y-%m-%d %H:%M:%S') | Arch Linux \${ARCH_LINUX_VERSION} | Initialized\""
-            } >>"/mnt/home/${ARCH_LINUX_USERNAME}/.arch-linux/system/${INIT_FILENAME}.sh"
-            arch-chroot /mnt chmod +x "/home/${ARCH_LINUX_USERNAME}/.arch-linux/system/${INIT_FILENAME}.sh"
-            {
-                echo "[Desktop Entry]"
-                echo "Type=Application"
-                echo "Name=Arch Linux Initialize"
-                echo "Icon=preferences-system"
-                echo "Exec=bash -c '/home/${ARCH_LINUX_USERNAME}/.arch-linux/system/${INIT_FILENAME}.sh > /home/${ARCH_LINUX_USERNAME}/.arch-linux/system/${INIT_FILENAME}.log'"
-            } >"/mnt/home/${ARCH_LINUX_USERNAME}/.config/autostart/${INIT_FILENAME}.desktop"
-            arch-chroot /mnt chown -R "$ARCH_LINUX_USERNAME":"$ARCH_LINUX_USERNAME" "/home/${ARCH_LINUX_USERNAME}"
-            process_return 0 # Return
-        ) &>"$PROCESS_LOG" &
-        process_capture $! "$process_name"
-    fi
-}
-
-# ---------------------------------------------------------------------------------------------------
-
-# shellcheck disable=SC2016
-exec_cleanup_installation() {
-    local process_name="Cleanup Installation"
-    process_init "$process_name"
-    (
-        [ "$DEBUG" = "true" ] && sleep 1 && process_return 0                                                  # If debug mode then return
-        arch-chroot /mnt chown -R "$ARCH_LINUX_USERNAME":"$ARCH_LINUX_USERNAME" "/home/${ARCH_LINUX_USERNAME}"         # Set correct home permissions
-        arch-chroot /mnt bash -c 'pacman -Qtd &>/dev/null && pacman -Rns --noconfirm $(pacman -Qtdq) || true' # Remove orphans and force return true
-        process_return 0                                                                                      # Return
-    ) &>"$PROCESS_LOG" &
-    process_capture $! "$process_name"
-}
-
-# ---------------------------------------------------------------------------------------------------
-
-configure_mirror_monitoring() {
-    local process_name="Configure Mirror Monitoring"
-    process_init "$process_name"
-    (
-        [ "$DEBUG" = "true" ] && sleep 1 && process_return 0
-        # Создаём конфигурационный файл для reflector
-        mkdir -p /mnt/etc/xdg/reflector
-        {
-            echo "# Reflector configuration for automatic mirror updates"
-            echo "--save /etc/pacman.d/mirrorlist"
-            echo "--protocol https"
-            echo "--latest 20"
-            echo "--sort rate"
-            
-            # Обработка выбранных регионов
-            if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" != "Worldwide" ]] && [ -n "${ARCH_LINUX_MIRROR_REGIONS[*]}" ]; then
-                # Добавляем каждую страну по отдельности
-                for region in "${ARCH_LINUX_MIRROR_REGIONS[@]}"; do
-                    echo "--country $region"
-                done
-            fi
-        } > /mnt/etc/xdg/reflector/reflector.conf
-        
-        # Логирование информации о конфигурации
-        if [[ "${ARCH_LINUX_MIRROR_REGIONS[*]}" == "Worldwide" ]] || [ -z "${ARCH_LINUX_MIRROR_REGIONS[*]}" ]; then
-            log_info "Reflector configured for Worldwide mirrors"
-        else
-            log_info "Reflector configured with regions: ${ARCH_LINUX_MIRROR_REGIONS[*]}"
-        fi
-        
-        # Активируем systemd таймер для еженедельного обновления
-        arch-chroot /mnt systemctl enable reflector.timer
-        log_info "Reflector timer enabled for weekly mirror updates"
-        process_return 0
-    ) &>"$PROCESS_LOG" &
-    process_capture $! "$process_name"
-}
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# CHROOT HELPER
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-chroot_pacman_install() {
-    local packages=("$@")
-    local pacman_failed="true"
-    # Retry installing packages 5 times (in case of connection issues)
-    for ((i = 1; i < 6; i++)); do
-        # Print log if greather than first try
-        [ "$i" -gt 1 ] && log_warn "${i}. Retry Pacman installation..."
-        # Try installing packages
-        # if ! arch-chroot /mnt bash -c "yes | LC_ALL=en_US.UTF-8 pacman -S --needed --disable-download-timeout ${packages[*]}"; then
-        if ! arch-chroot /mnt pacman -S --noconfirm --needed --disable-download-timeout "${packages[@]}"; then
-            sleep 10 && continue # Wait 10 seconds & try again
-        else
-            pacman_failed="false" && break # Success: break loop
-        fi
-    done
-    # Result
-    [ "$pacman_failed" = "true" ] && return 1  # Failed after 5 retries
-    [ "$pacman_failed" = "false" ] && return 0 # Success
-}
-
-chroot_aur_install() {
-
-    # Vars
-    local repo repo_url repo_tmp_dir aur_failed
-    repo="$1" && repo_url="https://aur.archlinux.org/${repo}.git"
-
-    # Disable sudo needs no password rights
-    sed -i 's/^# %wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) NOPASSWD: ALL/' /mnt/etc/sudoers
-
-    # Temp dir
-    repo_tmp_dir=$(mktemp -u "/home/${ARCH_LINUX_USERNAME}/.tmp-aur-${repo}.XXXX")
-
-    # Retry installing AUR 5 times (in case of connection issues)
-    aur_failed="true"
-    for ((i = 1; i < 6; i++)); do
-
-        # Print log if greather than first try
-        [ "$i" -gt 1 ] && log_warn "${i}. Retry AUR installation..."
-
-        #  Try cloning AUR repo
-        ! arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- bash -c "rm -rf ${repo_tmp_dir}; git clone ${repo_url} ${repo_tmp_dir}" && sleep 10 && continue
-
-        # Add '!debug' option to PKGBUILD
-        arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- bash -c "cd ${repo_tmp_dir} && echo -e \"\noptions=('!debug')\" >>PKGBUILD"
-
-        # Try installing AUR
-        if ! arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- bash -c "cd ${repo_tmp_dir} && makepkg -si --noconfirm --needed"; then
-            sleep 10 && continue # Wait 10 seconds & try again
-        else
-            aur_failed="false" && break # Success: break loop
-        fi
-    done
-
-    # Remove tmp dir
-    arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- rm -rf "$repo_tmp_dir"
-
-    # Enable sudo needs no password rights
-    sed -i 's/^%wheel ALL=(ALL:ALL) NOPASSWD: ALL/# %wheel ALL=(ALL:ALL) NOPASSWD: ALL/' /mnt/etc/sudoers
-
-    # Result
-    [ "$aur_failed" = "true" ] && return 1  # Failed after 5 retries
-    [ "$aur_failed" = "false" ] && return 0 # Success
-}
-
-chroot_pacman_remove() { arch-chroot /mnt pacman -Rn --noconfirm "$@" || return 1; }
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# TRAP FUNCTIONS
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-# shellcheck disable=SC2317
-trap_error() {
-    # If process calls this trap, write error to file to use in exit trap
-    echo "Command '${BASH_COMMAND}' failed with exit code $? in function '${1}' (line ${2})" >"$ERROR_MSG"
-}
-
-# shellcheck disable=SC2317
-trap_exit() {
-    local result_code="$?"
-
-    # Read error msg from file (written in error trap)
-    local error && [ -f "$ERROR_MSG" ] && error="$(<"$ERROR_MSG")" && rm -f "$ERROR_MSG"
-
-    # Cleanup
-    unset ARCH_LINUX_PASSWORD
-    rm -rf "$SCRIPT_TMP_DIR"
-
-    # When ctrl + c pressed exit without other stuff below
-    [ "$result_code" = "130" ] && gum_warn "Exit..." && {
-        exit 1
-    }
-
-    # Check if failed and print error
-    if [ "$result_code" -gt "0" ]; then
-        [ -n "$error" ] && gum_fail "$error"            # Print error message (if exists)
-        [ -z "$error" ] && gum_fail "An Error occurred" # Otherwise pint default error message
-        gum_warn "See ${SCRIPT_LOG} for more information..."
-        gum_confirm "Show Logs?" && gum pager --show-line-numbers <"$SCRIPT_LOG" # Ask for show logs?
-    fi
-
-    exit "$result_code" # Exit installer.sh
-}
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# PROCESS FUNCTIONS
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-process_init() {
-    [ -f "$PROCESS_RET" ] && gum_fail "${PROCESS_RET} already exists" && exit 1
-    echo 1 >"$PROCESS_RET" # Init result with 1
-    log_proc "${1}..."     # Log starting
-}
-
-process_capture() {
-    local pid="$1"              # Set process pid
-    local process_name="$2"     # Set process name
-    local user_canceled="false" # Will set to true if user press ctrl + c
-
-    # Show gum spinner until pid is not exists anymore and set user_canceled to true on failure
-    gum_spin --title "${process_name}..." -- bash -c "while kill -0 $pid &> /dev/null; do sleep 1; done" || user_canceled="true"
-    cat "$PROCESS_LOG" >>"$SCRIPT_LOG" # Write process log to logfile
-
-    # When user press ctrl + c while process is running
-    if [ "$user_canceled" = "true" ]; then
-        kill -0 "$pid" &>/dev/null && pkill -P "$pid" &>/dev/null              # Kill process if running
-        gum_fail "Process with PID ${pid} was killed by user" && trap_gum_exit # Exit with 130
-    fi
-
-    # Handle error while executing process
-    [ ! -f "$PROCESS_RET" ] && gum_fail "${PROCESS_RET} not found (do not init process?)" && exit 1
-    [ "$(<"$PROCESS_RET")" != "0" ] && gum_fail "${process_name} failed" && exit 1 # If process failed (result code 0 was not write in the end)
-
-    # Finish
-    rm -f "$PROCESS_RET"                 # Remove process result file
-    gum_proc "${process_name}" "success" # Print process success
-}
-
-process_return() {
-    # 1. Write from sub process 0 to file when succeed (at the end of the script part)
-    # 2. Rread from parent process after sub process finished (0=success 1=failed)
-    echo "$1" >"$PROCESS_RET"
-    exit "$1"
-}
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# HELPER FUNCTIONS
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-print_header() {
-    local title="$1"
-    clear && gum_purple '
-    #    ######   #####  #     #    #       ### #     # #     # #     # 
-   # #   #     # #     # #     #    #        #  ##    # #     #  #   #  
-  #   #  #     # #       #     #    #        #  # #   # #     #   # #   
- #     # ######  #       #######    #        #  #  #  # #     #    #    
- ####### #   #   #       #     #    #        #  #   # # #     #   # #   
- #     # #    #  #     # #     #    #        #  #    ## #     #  #   #  
- #     # #     #  #####  #     #    ####### ### #     #  #####  #     # 
-                                                                        '
-    local header_version="               v. ${VERSION}"
-    [ "$DEBUG" = "true" ] && header_version="               d. ${VERSION}"
-    gum_white --margin "1 0" --align left --bold "Welcome to ${title} ${header_version}"
-    [ "$FORCE" = "true" ] && gum_red --bold "CAUTION: Force mode enabled. Cancel with: Ctrl + c" && echo
-    return 0
-}
-
-print_filled_space() {
-    local total="$1" && local text="$2" && local length="${#text}"
-    [ "$length" -ge "$total" ] && echo "$text" && return 0
-    local padding=$((total - length)) && printf '%s%*s\n' "$text" "$padding" ""
-}
-
-gum_init() {
-    if [ ! -x ./gum ]; then
-        clear && echo "Loading Arch Linux Installer..." # Loading
-        local gum_url gum_path                       # Prepare URL with version os and arch
-        # https://github.com/charmbracelet/gum/releases
-        gum_url="https://github.com/charmbracelet/gum/releases/download/v${GUM_VERSION}/gum_${GUM_VERSION}_$(uname -s)_$(uname -m).tar.gz"
-        if ! curl -Lsf "$gum_url" >"${SCRIPT_TMP_DIR}/gum.tar.gz"; then echo "Error downloading ${gum_url}" && exit 1; fi
-        if ! tar -xf "${SCRIPT_TMP_DIR}/gum.tar.gz" --directory "$SCRIPT_TMP_DIR"; then echo "Error extracting ${SCRIPT_TMP_DIR}/gum.tar.gz" && exit 1; fi
-        gum_path=$(find "${SCRIPT_TMP_DIR}" -type f -executable -name "gum" -print -quit)
-        [ -z "$gum_path" ] && echo "Error: 'gum' binary not found in '${SCRIPT_TMP_DIR}'" && exit 1
-        if ! mv "$gum_path" ./gum; then echo "Error moving ${gum_path} to ./gum" && exit 1; fi
-        if ! chmod +x ./gum; then echo "Error chmod +x ./gum" && exit 1; fi
-    fi
-}
-
-gum() {
-    if [ -n "$GUM" ] && [ -x "$GUM" ]; then
-        "$GUM" "$@"
-    else
-        echo "Error: GUM='${GUM}' is not found or executable" >&2
-        exit 1
-    fi
-}
-
-trap_gum_exit() { exit 130; }
-trap_gum_exit_confirm() { gum_confirm "Exit Installation?" && trap_gum_exit; }
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# GUM WRAPPER
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-# Gum colors (https://github.com/muesli/termenv?tab=readme-ov-file#color-chart)
-gum_white() { gum_style --foreground "$COLOR_WHITE" "${@}"; }
-gum_purple() { gum_style --foreground "$COLOR_PURPLE" "${@}"; }
-gum_yellow() { gum_style --foreground "$COLOR_YELLOW" "${@}"; }
-gum_red() { gum_style --foreground "$COLOR_RED" "${@}"; }
-gum_green() { gum_style --foreground "$COLOR_GREEN" "${@}"; }
-
-# Gum prints
-gum_title() { log_head "${*}" && gum join "$(gum_purple --bold "+ ")" "$(gum_purple --bold "${*}")"; }
-gum_info() { log_info "$*" && gum join "$(gum_green --bold "• ")" "$(gum_white "${*}")"; }
-gum_warn() { log_warn "$*" && gum join "$(gum_yellow --bold "• ")" "$(gum_white "${*}")"; }
-gum_fail() { log_fail "$*" && gum join "$(gum_red --bold "• ")" "$(gum_white "${*}")"; }
-
-# Gum wrapper
-gum_style() { gum style "${@}"; }
-gum_confirm() { gum confirm --prompt.foreground "$COLOR_PURPLE" "${@}"; }
-gum_input() { gum input --placeholder "..." --prompt "> " --prompt.foreground "$COLOR_PURPLE" --header.foreground "$COLOR_PURPLE" "${@}"; }
-gum_write() { gum write --prompt "> " --header.foreground "$COLOR_PURPLE" --show-cursor-line --char-limit 0 "${@}"; }
-gum_choose() { gum choose --cursor "> " --header.foreground "$COLOR_PURPLE" --cursor.foreground "$COLOR_PURPLE" "${@}"; }
-gum_filter() { gum filter --prompt "> " --indicator ">" --placeholder "Type to filter..." --height 8 --header.foreground "$COLOR_PURPLE" "${@}"; }
-gum_spin() { gum spin --spinner line --title.foreground "$COLOR_PURPLE" --spinner.foreground "$COLOR_PURPLE" "${@}"; }
-
-# Gum key & value
-gum_proc() { log_proc "$*" && gum join "$(gum_green --bold "• ")" "$(gum_white --bold "$(print_filled_space 24 "${1}")")" "$(gum_white "  >  ")" "$(gum_green "${2}")"; }
-gum_property() { log_prop "$*" && gum join "$(gum_green --bold "• ")" "$(gum_white "$(print_filled_space 24 "${1}")")" "$(gum_green --bold "  >  ")" "$(gum_white --bold "${2}")"; }
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# LOGGING WRAPPER
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-write_log() { echo -e "$(date '+%Y-%m-%d %H:%M:%S') | arch-linux | ${*}" >>"$SCRIPT_LOG"; }
-log_info() { write_log "INFO | ${*}"; }
-log_warn() { write_log "WARN | ${*}"; }
-log_fail() { write_log "FAIL | ${*}"; }
-log_head() { write_log "HEAD | ${*}"; }
-log_proc() { write_log "PROC | ${*}"; }
-log_prop() { write_log "PROP | ${*}"; }
-
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-# START MAIN
-# ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-main "$@"
+                echo "echo \"\$(date '+%Y-%m-%d %H:%M:%S')
