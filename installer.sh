@@ -16,7 +16,7 @@ set -E          # ERR trap inherited by shell functions (errtrace)
 : "${FORCE:=false}" # FORCE=true ./installer.sh
 
 # SCRIPT
-VERSION='1.0.3'
+VERSION='1.0.4'
 
 # GUM
 GUM_VERSION="0.13.0"
@@ -872,21 +872,21 @@ exec_prepare_disk() {
         
         # Mount Btrfs subvolumes to /mnt
         if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
-            mount -o subvol=@ /dev/mapper/cryptroot /mnt
+            mount -o subvol=@,compress=zstd /dev/mapper/cryptroot /mnt
         else
-            mount -o subvol=@ "$ARCH_LINUX_ROOT_PARTITION" /mnt
+            mount -o subvol=@,compress=zstd "$ARCH_LINUX_ROOT_PARTITION" /mnt
         fi
         mkdir -p /mnt/home
         if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
-            mount -o subvol=@home /dev/mapper/cryptroot /mnt/home
+            mount -o subvol=@home,compress=zstd /dev/mapper/cryptroot /mnt/home
         else
-            mount -o subvol=@home "$ARCH_LINUX_ROOT_PARTITION" /mnt/home
+            mount -o subvol=@home,compress=zstd "$ARCH_LINUX_ROOT_PARTITION" /mnt/home
         fi
         mkdir -p /mnt/.snapshots
         if [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ]; then
-            mount -o subvol=@snapshots /dev/mapper/cryptroot /mnt/.snapshots
+            mount -o subvol=@snapshots,compress=zstd /dev/mapper/cryptroot /mnt/.snapshots
         else
-            mount -o subvol=@snapshots "$ARCH_LINUX_ROOT_PARTITION" /mnt/.snapshots
+            mount -o subvol=@snapshots,compress=zstd "$ARCH_LINUX_ROOT_PARTITION" /mnt/.snapshots
         fi
         mkdir -p /mnt/boot
         mount -v "$ARCH_LINUX_BOOT_PARTITION" /mnt/boot
@@ -962,12 +962,12 @@ exec_pacstrap_core() {
         # Install Bootloader to /boot (systemdboot)
         arch-chroot /mnt bootctl --esp-path=/boot install # Install systemdboot to /boot
 
-        # Kernel args
+        # Kernel args for btrfs
         # Zswap should be disabled when using zram (https://github.com/archlinux/archinstall/issues/881)
         # Silent boot: https://wiki.archlinux.org/title/Silent_boot
         local kernel_args=()
-        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ] && kernel_args+=("rd.luks.name=$(blkid -s UUID -o value "${ARCH_LINUX_ROOT_PARTITION}")=cryptroot" "root=/dev/mapper/cryptroot" "rootflags=subvol=@")
-        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && kernel_args+=("root=PARTUUID=$(lsblk -dno PARTUUID "${ARCH_LINUX_ROOT_PARTITION}")" "rootflags=subvol=@")
+        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "true" ] && kernel_args+=("rd.luks.name=$(blkid -s UUID -o value "${ARCH_LINUX_ROOT_PARTITION}")=cryptroot" "root=/dev/mapper/cryptroot" "rootflags=subvol=@,compress=zstd")
+        [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && kernel_args+=("root=PARTUUID=$(lsblk -dno PARTUUID "${ARCH_LINUX_ROOT_PARTITION}")" "rootflags=subvol=@,compress=zstd")
         kernel_args+=('rw' 'init=/usr/lib/systemd/systemd' 'zswap.enabled=0')
         [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('nowatchdog')
         [ "$ARCH_LINUX_BOOTSPLASH_ENABLED" = "true" ] || [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('quiet' 'splash' 'vt.global_cursor_default=0')
@@ -1033,12 +1033,6 @@ exec_pacstrap_core() {
 
             # Disable debug packages when using makepkg
             sed -i '/OPTIONS=.*!debug/!s/\(OPTIONS=.*\)debug/\1!debug/' /mnt/etc/makepkg.conf
-
-            # Set max VMAs (need for some apps/games)
-            #echo vm.max_map_count=1048576 >/mnt/etc/sysctl.d/vm.max_map_count.conf
-
-            # Reduce shutdown timeout
-            #sed -i "s/^\s*#\s*DefaultTimeoutStopSec=.*/DefaultTimeoutStopSec=10s/" /mnt/etc/systemd/system.conf
         fi
 
         # Return
@@ -1073,9 +1067,6 @@ exec_install_desktop() {
                 # Audio (Pipewire replacements + session manager): https://wiki.archlinux.org/title/PipeWire#Installation
                 packages+=(pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-pipewire lib32-pipewire-jack)
-
-                # Disabled because hardware-specific
-                #packages+=(sof-firmware) # Need for intel i5 audio
 
                 # Networking & Access
                 packages+=(samba rsync gvfs gvfs-mtp gvfs-smb gvfs-nfs gvfs-afc gvfs-goa gvfs-gphoto2 gvfs-google gvfs-dnssd gvfs-wsdd)
@@ -1239,9 +1230,6 @@ exec_install_desktop() {
 
                 # https://wiki.archlinux.org/title/Samba#Windows_1709_or_up_does_not_discover_the_samba_server_in_Network_view
                 arch-chroot /mnt systemctl enable wsdd.service
-
-                # Disabled (master browser issues) > may needed for old windows clients
-                #arch-chroot /mnt systemctl enable nmb.service
             fi
 
             # Set X11 keyboard layout in /etc/X11/xorg.conf.d/00-keyboard.conf
@@ -1269,12 +1257,6 @@ exec_install_desktop() {
                 arch-chroot /mnt systemctl enable cups.socket # Printer
             fi
 
-            # User services (Not working: Failed to connect to user scope bus via local transport: Permission denied)
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user pipewire.service       # Pipewire
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user pipewire-pulse.service # Pipewire
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user wireplumber.service    # Pipewire
-            # arch-chroot /mnt /usr/bin/runuser -u "$ARCH_LINUX_USERNAME" -- systemctl enable --user gcr-ssh-agent.socket   # GCR ssh-agent
-
             # Workaround: Manual creation of user service symlinks
             arch-chroot /mnt mkdir -p "/home/${ARCH_LINUX_USERNAME}/.config/systemd/user/default.target.wants"
             arch-chroot /mnt ln -s "/usr/lib/systemd/user/pipewire.service" "/home/${ARCH_LINUX_USERNAME}/.config/systemd/user/default.target.wants/pipewire.service"
@@ -1290,16 +1272,6 @@ exec_install_desktop() {
 
             # Create users applications dir
             mkdir -p "/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications"
-
-            # Create UEFI Boot desktop entry
-            # {
-            #    echo '[Desktop Entry]'
-            #    echo 'Name=Reboot to UEFI'
-            #    echo 'Icon=system-reboot'
-            #    echo 'Exec=systemctl reboot --firmware-setup'
-            #    echo 'Type=Application'
-            #    echo 'Terminal=false'
-            # } >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/systemctl-reboot-firmware.desktop"
 
             # Hide aplications desktop icons
             echo -e '[Desktop Entry]\nType=Application\nHidden=true' >"/mnt/home/${ARCH_LINUX_USERNAME}/.local/share/applications/bssh.desktop"
@@ -1365,15 +1337,17 @@ exec_install_graphics_driver() {
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "nvidia") # https://wiki.archlinux.org/title/NVIDIA#Installation
-                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d)
+                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d vulkan-tools)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-nvidia-utils lib32-opencl-nvidia lib32-vkd3d)
                 chroot_pacman_install "${packages[@]}"
-                # https://wiki.archlinux.org/title/NVIDIA#DRM_kernel_mode_setting
-                # Alternative (slow boot, bios logo twice, but correct plymouth resolution):
-                #sed -i "s/systemd zswap.enabled=0/systemd nvidia_drm.modeset=1 nvidia_drm.fbdev=1 zswap.enabled=0/g" /mnt/boot/loader/entries/arch.conf
+                
+                # Настраиваем modprobe для nvidia_drm
                 mkdir -p /mnt/etc/modprobe.d/ && echo -e 'options nvidia_drm modeset=1 fbdev=1' >/mnt/etc/modprobe.d/nvidia.conf
+                
+                # Добавляем модули NVIDIA в mkinitcpio.conf
                 sed -i "s/^MODULES=(.*)/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/g" /mnt/etc/mkinitcpio.conf
-                # https://wiki.archlinux.org/title/NVIDIA#pacman_hook
+                
+                # Создаем корректный pacman hook для NVIDIA
                 mkdir -p /mnt/etc/pacman.d/hooks/
                 {
                     echo "[Trigger]"
@@ -1381,33 +1355,30 @@ exec_install_graphics_driver() {
                     echo "Operation=Upgrade"
                     echo "Operation=Remove"
                     echo "Type=Package"
-                    echo "Target=nvidia"
+                    echo "Target=nvidia-dkms"
                     echo "Target=${ARCH_LINUX_KERNEL}"
-                    echo "# Change the linux part above if a different kernel is used"
                     echo ""
                     echo "[Action]"
                     echo "Description=Update NVIDIA module in initcpio"
                     echo "Depends=mkinitcpio"
                     echo "When=PostTransaction"
-                    echo "NeedsTargets"
-                    echo "Exec=/bin/sh -c 'while read -r trg; do case \$trg in linux*) exit 0; esac; done; /usr/bin/mkinitcpio -P'"
+                    echo "Exec=/usr/bin/mkinitcpio -P"
                 } >/mnt/etc/pacman.d/hooks/nvidia.hook
-                # Enable Wayland Support (https://wiki.archlinux.org/title/GDM#Wayland_and_the_proprietary_NVIDIA_driver)
+                
+                # Включаем поддержку Wayland для NVIDIA
                 [ ! -f /mnt/etc/udev/rules.d/61-gdm.rules ] && mkdir -p /mnt/etc/udev/rules.d/ && ln -s /dev/null /mnt/etc/udev/rules.d/61-gdm.rules
-                # Rebuild initial ram disk
+                
+                # Пересобираем initial ramdisk
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "amd") # https://wiki.archlinux.org/title/AMDGPU#Installation
-                # Deprecated: libva-mesa-driver lib32-libva-mesa-driver mesa-vdpau lib32-mesa-vdpau
                 local packages=(mesa mesa-utils xf86-video-amdgpu vulkan-radeon vkd3d)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-mesa lib32-vulkan-radeon lib32-vkd3d)
                 chroot_pacman_install "${packages[@]}"
-                # Must be discussed: https://wiki.archlinux.org/title/AMDGPU#Disable_loading_radeon_completely_at_boot
                 sed -i "s/^MODULES=(.*)/MODULES=(amdgpu)/g" /mnt/etc/mkinitcpio.conf
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "ati") # https://wiki.archlinux.org/title/ATI#Installation
-                # Deprecated: libva-mesa-driver lib32-libva-mesa-driver mesa-vdpau lib32-mesa-vdpau
                 local packages=(mesa mesa-utils xf86-video-ati vkd3d)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-mesa lib32-vkd3d)
                 chroot_pacman_install "${packages[@]}"
