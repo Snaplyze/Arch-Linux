@@ -970,8 +970,6 @@ exec_pacstrap_core() {
         [ "$ARCH_LINUX_ENCRYPTION_ENABLED" = "false" ] && kernel_args+=("root=PARTUUID=$(lsblk -dno PARTUUID "${ARCH_LINUX_ROOT_PARTITION}")" "rootflags=subvol=@")
         kernel_args+=('rw' 'init=/usr/lib/systemd/systemd' 'zswap.enabled=0')
         [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('nowatchdog')
-        # Добавляем параметр nvidia-drm.modeset=1 для nvidia драйвера (ИСПРАВЛЕНИЕ)
-        [ "$ARCH_LINUX_DESKTOP_GRAPHICS_DRIVER" = "nvidia" ] && kernel_args+=('nvidia-drm.modeset=1')
         [ "$ARCH_LINUX_BOOTSPLASH_ENABLED" = "true" ] || [ "$ARCH_LINUX_CORE_TWEAKS_ENABLED" = "true" ] && kernel_args+=('quiet' 'splash' 'vt.global_cursor_default=0')
 
         { # Create Bootloader config
@@ -1367,8 +1365,7 @@ exec_install_graphics_driver() {
                 arch-chroot /mnt mkinitcpio -P
                 ;;
             "nvidia") # https://wiki.archlinux.org/title/NVIDIA#Installation
-                # ИСПРАВЛЕНИЕ: Добавлен пакет vulkan-tools
-                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d vulkan-tools)
+                local packages=("${ARCH_LINUX_KERNEL}-headers" nvidia-dkms nvidia-settings nvidia-utils opencl-nvidia vkd3d)
                 [ "$ARCH_LINUX_MULTILIB_ENABLED" = "true" ] && packages+=(lib32-nvidia-utils lib32-opencl-nvidia lib32-vkd3d)
                 chroot_pacman_install "${packages[@]}"
                 # https://wiki.archlinux.org/title/NVIDIA#DRM_kernel_mode_setting
@@ -1378,24 +1375,23 @@ exec_install_graphics_driver() {
                 sed -i "s/^MODULES=(.*)/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/g" /mnt/etc/mkinitcpio.conf
                 # https://wiki.archlinux.org/title/NVIDIA#pacman_hook
                 mkdir -p /mnt/etc/pacman.d/hooks/
-                
-                # ИСПРАВЛЕНИЕ: Исправлен pacman hook для NVIDIA
                 {
                     echo "[Trigger]"
                     echo "Operation=Install"
                     echo "Operation=Upgrade"
                     echo "Operation=Remove"
                     echo "Type=Package"
-                    echo "Target=nvidia-dkms"
+                    echo "Target=nvidia"
                     echo "Target=${ARCH_LINUX_KERNEL}"
+                    echo "# Change the linux part above if a different kernel is used"
                     echo ""
                     echo "[Action]"
                     echo "Description=Update NVIDIA module in initcpio"
                     echo "Depends=mkinitcpio"
                     echo "When=PostTransaction"
-                    echo "Exec=/usr/bin/mkinitcpio -P"
+                    echo "NeedsTargets"
+                    echo "Exec=/bin/sh -c 'while read -r trg; do case \$trg in linux*) exit 0; esac; done; /usr/bin/mkinitcpio -P'"
                 } >/mnt/etc/pacman.d/hooks/nvidia.hook
-                
                 # Enable Wayland Support (https://wiki.archlinux.org/title/GDM#Wayland_and_the_proprietary_NVIDIA_driver)
                 [ ! -f /mnt/etc/udev/rules.d/61-gdm.rules ] && mkdir -p /mnt/etc/udev/rules.d/ && ln -s /dev/null /mnt/etc/udev/rules.d/61-gdm.rules
                 # Rebuild initial ram disk
