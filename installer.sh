@@ -1543,7 +1543,6 @@ exec_finalize_arch_linux() {
             # Print initialized info
             {
                 echo "# exec_finalize_arch_linux | Print initialized info"
-                echo "echo \"\$(date '+%Y-%m-%d %H:%M:%S')
                 echo "echo \"\$(date '+%Y-%m-%d %H:%M:%S') | Arch Linux \${ARCH_LINUX_VERSION} | Initialized\""
             } >>"/mnt/home/${ARCH_LINUX_USERNAME}/.arch-linux/system/${INIT_FILENAME}.sh"
             arch-chroot /mnt chmod +x "/home/${ARCH_LINUX_USERNAME}/.arch-linux/system/${INIT_FILENAME}.sh"
